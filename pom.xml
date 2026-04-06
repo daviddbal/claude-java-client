@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>net.balsoftware</groupId>
+        <artifactId>trading-parent</artifactId>
+        <version>1.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>claude</artifactId>
+    <name>claude api client</name>
+    <packaging>jar</packaging>
+
+    <dependencies>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>feature-builder</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>net-trainer</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>utilities</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>trader-common-legacy</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>trading-app</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>trading-broker</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>trading-common</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>trading-domain</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>trading-infra</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.balsoftware</groupId>
+            <artifactId>websocket-rx</artifactId>
+            <version>${my.project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- Claude client dependencies -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven.surfile.plugin.version}</version>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                </configuration>
+            </plugin>
+
+            <!-- Fat jar: bundles all dependencies into one executable jar -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.2</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>net.balsoftware.claude.Main</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
