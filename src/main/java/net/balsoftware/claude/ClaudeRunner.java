@@ -8,9 +8,10 @@ public class ClaudeRunner {
 
     // Trimmed system prompt to reduce input tokens on every request
     private static final String BASE_SYSTEM_PROMPT =
-            "You are a senior Java software engineer. Respond ONLY with valid JSON:\n" +
+            "You are a senior Java software engineer assistant. " +
+                    "When asked to generate or modify code, respond ONLY with valid JSON:\n" +
                     "{\"description\":\"<summary>\",\"files\":[{\"path\":\"<path>\",\"content\":\"<full file content>\"}]}\n" +
-                    "No markdown, no extra text outside the JSON.";
+                    "For all other questions (explanations, discussions, analysis), respond in plain text.";
 
     private final ClaudeClient claudeClient;
     private final SourceFileCollector sourceFileCollector;

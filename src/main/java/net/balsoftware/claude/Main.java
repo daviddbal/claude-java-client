@@ -7,20 +7,23 @@ import java.util.Scanner;
 /**
  * Interactive CLI for the Claude coding assistant.
  *
- * Required env var : ANTHROPIC_API_KEY
+ * Required env var : CLAUDE_API_KEY
  * Optional env var : CLAUDE_MODEL      (default: claude-opus-4-5)
  * Optional env var : CLAUDE_MAX_TOKENS (default: 4096)
  */
 public class Main {
 
     public static void main(String[] args) throws Exception {
-        String apiKey = System.getenv("ANTHROPIC_API_KEY");
+        String apiKey = EnvConfig.getClaudeApiKey();
+        System.out.println("Loaded key: " + (apiKey != null));
         if (apiKey == null || apiKey.isBlank()) {
-            System.err.println("ERROR: ANTHROPIC_API_KEY environment variable not set.");
+            System.err.println("ERROR: CLAUDE_API_KEY environment variable not set.");
             System.exit(1);
         }
 
-        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-opus-4-5");
+//        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-opus-4-6");
+//        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6");
+        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-haiku-4-5-20251001");
         int maxTokens    = Integer.parseInt(System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", "4096"));
 
         ClaudeSession session = ClaudeSession.builder()
@@ -32,7 +35,7 @@ public class Main {
                 .build();
 
         session.loadContext(List.of(
-                net.balsoftware.trader.TraderParameters.class
+//                net.balsoftware.trader.TraderParameters.class
         ));
 
         System.out.println("Claude Coding Assistant — model: " + model + " | max_tokens: " + maxTokens);

@@ -8,6 +8,7 @@ import okhttp3.*;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public class ClaudeClient {
     private static final String API_URL = "https://api.anthropic.com/v1/messages";
@@ -22,7 +23,11 @@ public class ClaudeClient {
     public ClaudeClient(String apiKey, int maxTokens) {
         this.apiKey = apiKey;
         this.maxTokens = maxTokens;
-        this.httpClient = new OkHttpClient();
+        this.httpClient = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(120, TimeUnit.SECONDS)   // Claude can be slow on large responses
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .build();
         this.objectMapper = new ObjectMapper();
     }
 
