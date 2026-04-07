@@ -8,8 +8,11 @@ import java.util.Scanner;
  * Interactive CLI for the Claude coding assistant.
  *
  * Required env var : CLAUDE_API_KEY
- * Optional env var : CLAUDE_MODEL      (default: claude-opus-4-5)
+ * Optional env var : CLAUDE_MODEL      (default: claude-haiku-4-5-20251001)
  * Optional env var : CLAUDE_MAX_TOKENS (default: 4096)
+ *
+ * Drop any files into {@code context-files/} (sibling of {@code generated/}) to
+ * include them automatically in every request's system prompt.
  */
 public class Main {
 
@@ -23,8 +26,8 @@ public class Main {
 
 //        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-opus-4-6");
 //        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6");
-        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-haiku-4-5-20251001");
-        int maxTokens    = Integer.parseInt(System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", "4096"));
+        String model  = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-haiku-4-5-20251001");
+        int maxTokens = Integer.parseInt(System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", "4096"));
 
         ClaudeSession session = ClaudeSession.builder()
                 .apiKey(apiKey)
@@ -32,6 +35,7 @@ public class Main {
                 .maxTokens(maxTokens)
                 .sourceRoots(List.of(Path.of("src/main/java")))
                 .outputRoot(Path.of("generated"))
+                .contextFilesRoot(Path.of("context-files"))   // drop any files here for extra context
                 .build();
 
         session.loadContext(List.of(
@@ -47,6 +51,7 @@ public class Main {
         System.out.println("  tokens — show total token usage this session");
         System.out.println("  quit   — exit");
         System.out.println("--------------------------------------------------");
+        System.out.println("Tip: place any files in ./context-files/ to add them to Claude's context.");
 
         Scanner scanner = new Scanner(System.in);
         ClaudeResponse last = null;

@@ -13,6 +13,7 @@ import java.util.List;
  *         .model("claude-opus-4-5")
  *         .sourceRoots(List.of(Path.of("src/main/java")))
  *         .outputRoot(Path.of("generated"))
+ *         .contextFilesRoot(Path.of("context-files"))   // optional — drop any files here
  *         .maxTokens(4096)
  *         .build();
  *
@@ -24,6 +25,11 @@ import java.util.List;
  * session.writeFiles(r2);
  * System.out.println(session.tokenSummary());
  * }</pre>
+ *
+ * <p>The {@code context-files/} directory (configurable via {@link Builder#contextFilesRoot})
+ * lives at the same level as {@code generated/}. Drop any file there — Markdown, SQL,
+ * YAML, plain text, extra Java sources, etc. — and it will be included in the system
+ * prompt automatically.
  */
 public class ClaudeSession {
 
@@ -43,6 +49,7 @@ public class ClaudeSession {
         this.runner = new ClaudeRunner(
                 new ClaudeClient(builder.apiKey, builder.maxTokens),
                 new SourceFileCollector(sourceRootConfig),
+                new ContextFileCollector(builder.contextFilesRoot),
                 conversationStore,
                 new ClaudeResponseParser()
         );
@@ -54,8 +61,8 @@ public class ClaudeSession {
     // ------------------------------------------------------------------ context
 
     /**
-     * Loads source files into the system prompt. Skips if the context is unchanged.
-     * Does NOT count as a conversation turn.
+     * Loads source files and context-directory files into the system prompt.
+     * Skips if the context is unchanged. Does NOT count as a conversation turn.
      */
     public void loadContext(List<Class<?>> contextClasses) throws IOException {
         runner.setContext(contextClasses);
@@ -127,16 +134,18 @@ public class ClaudeSession {
 
     public static final class Builder {
         private String apiKey;
-        private String model           = "claude-opus-4-5";
-        private List<Path> sourceRoots = List.of(Path.of("src/main/java"));
-        private Path outputRoot        = Path.of("generated");
-        private int maxTokens          = 4096;
+        private String model              = "claude-opus-4-5";
+        private List<Path> sourceRoots    = List.of(Path.of("src/main/java"));
+        private Path outputRoot           = Path.of("generated");
+        private Path contextFilesRoot     = Path.of("context-files");
+        private int maxTokens             = 4096;
 
-        public Builder apiKey(String apiKey)          { this.apiKey = apiKey;           return this; }
-        public Builder model(String model)            { this.model = model;             return this; }
-        public Builder sourceRoots(List<Path> roots)  { this.sourceRoots = roots;       return this; }
-        public Builder outputRoot(Path outputRoot)    { this.outputRoot = outputRoot;   return this; }
-        public Builder maxTokens(int maxTokens)       { this.maxTokens = maxTokens;     return this; }
+        public Builder apiKey(String apiKey)                  { this.apiKey = apiKey;                   return this; }
+        public Builder model(String model)                    { this.model = model;                     return this; }
+        public Builder sourceRoots(List<Path> roots)          { this.sourceRoots = roots;               return this; }
+        public Builder outputRoot(Path outputRoot)            { this.outputRoot = outputRoot;           return this; }
+        public Builder contextFilesRoot(Path contextFilesRoot){ this.contextFilesRoot = contextFilesRoot; return this; }
+        public Builder maxTokens(int maxTokens)               { this.maxTokens = maxTokens;             return this; }
 
         public ClaudeSession build() {
             if (apiKey == null || apiKey.isBlank())

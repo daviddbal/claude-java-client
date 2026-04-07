@@ -14,15 +14,21 @@ class ClaudeRunnerTest {
 
     private ClaudeClient mockClient;
     private SourceFileCollector mockCollector;
+    private ContextFileCollector mockContextCollector;
     private ConversationStore store;
     private ClaudeRunner runner;
 
     @BeforeEach
-    void setUp() {
-        mockClient    = mock(ClaudeClient.class);
-        mockCollector = mock(SourceFileCollector.class);
-        store         = new ConversationStore();
-        runner        = new ClaudeRunner(mockClient, mockCollector, store, new ClaudeResponseParser());
+    void setUp() throws IOException {
+        mockClient           = mock(ClaudeClient.class);
+        mockCollector        = mock(SourceFileCollector.class);
+        mockContextCollector = mock(ContextFileCollector.class);
+        store                = new ConversationStore();
+
+        // Default: context-files directory returns nothing
+        when(mockContextCollector.collect()).thenReturn(List.of());
+
+        runner = new ClaudeRunner(mockClient, mockCollector, mockContextCollector, store, new ClaudeResponseParser());
     }
 
     @Test
@@ -94,5 +100,17 @@ class ClaudeRunnerTest {
                 "Source file content should be in system prompt");
         assertEquals(0, store.getTurnCount(),
                 "setContext should not add a conversation turn");
+    }
+
+    @Test
+    void setContextIncludesContextDirectoryFiles() throws IOException {
+        SourceFile contextFile = new SourceFile(java.nio.file.Path.of("context-files/schema.sql"), "SELECT 1;");
+        when(mockCollector.collect(anyList())).thenReturn(List.of());
+        when(mockContextCollector.collect()).thenReturn(List.of(contextFile));
+
+        runner.setContext(List.of());
+
+        assertTrue(store.getSystemPrompt().contains("SELECT 1;"),
+                "Context-directory file content should be in system prompt");
     }
 }

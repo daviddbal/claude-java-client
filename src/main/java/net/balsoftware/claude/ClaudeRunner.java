@@ -15,6 +15,7 @@ public class ClaudeRunner {
 
     private final ClaudeClient claudeClient;
     private final SourceFileCollector sourceFileCollector;
+    private final ContextFileCollector contextFileCollector;
     private final ConversationStore conversationStore;
     private final ClaudeResponseParser responseParser;
 
@@ -24,30 +25,49 @@ public class ClaudeRunner {
     public ClaudeRunner(
             ClaudeClient claudeClient,
             SourceFileCollector sourceFileCollector,
+            ContextFileCollector contextFileCollector,
             ConversationStore conversationStore,
             ClaudeResponseParser responseParser
     ) {
-        this.claudeClient        = claudeClient;
-        this.sourceFileCollector = sourceFileCollector;
-        this.conversationStore   = conversationStore;
-        this.responseParser      = responseParser;
+        this.claudeClient          = claudeClient;
+        this.sourceFileCollector   = sourceFileCollector;
+        this.contextFileCollector  = contextFileCollector;
+        this.conversationStore     = conversationStore;
+        this.responseParser        = responseParser;
     }
 
     /**
-     * Sets the source-file context. Skips rebuilding the system prompt if the
-     * set of context classes has not changed since the last call.
+     * Sets the source-file context. Rebuilds the system prompt from:
+     * <ol>
+     *   <li>The base system prompt</li>
+     *   <li>Java source files resolved from the provided classes</li>
+     *   <li>All files found in the {@code context-files/} directory</li>
+     * </ol>
+     * Skips rebuilding if neither the class list nor the context-files directory
+     * content has changed since the last call.
      */
     public void setContext(List<Class<?>> contextClasses) throws IOException {
-        int hash = contextClasses.hashCode();
-        if (hash == contextHash) return;   // unchanged — skip disk reads and prompt rebuild
+        List<SourceFile> contextDirFiles = contextFileCollector.collect();
+
+        int hash = contextClasses.hashCode() ^ contextDirFiles.hashCode();
+        if (hash == contextHash) return;   // unchanged — skip prompt rebuild
         contextHash = hash;
 
         List<SourceFile> sourceFiles = sourceFileCollector.collect(contextClasses);
+
         StringBuilder sb = new StringBuilder(BASE_SYSTEM_PROMPT);
 
         if (!sourceFiles.isEmpty()) {
-            sb.append("\nYou have the following source files as context:\n");
+            sb.append("\n\nYou have the following source files as context:\n");
             for (SourceFile f : sourceFiles) {
+                sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
+                sb.append(f.content()).append("\n");
+            }
+        }
+
+        if (!contextDirFiles.isEmpty()) {
+            sb.append("\n\nYou have the following additional context files:\n");
+            for (SourceFile f : contextDirFiles) {
                 sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
                 sb.append(f.content()).append("\n");
             }
