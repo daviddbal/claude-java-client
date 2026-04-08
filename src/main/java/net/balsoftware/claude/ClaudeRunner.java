@@ -1,12 +1,15 @@
 package net.balsoftware.claude;
 
 import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class ClaudeRunner {
 
-    // Trimmed system prompt to reduce input tokens on every request
     private static final String BASE_SYSTEM_PROMPT =
             "You are a senior Java software engineer assistant. " +
                     "When asked to generate or modify code, respond ONLY with valid JSON:\n" +
@@ -19,7 +22,6 @@ public class ClaudeRunner {
     private final ConversationStore conversationStore;
     private final ClaudeResponseParser responseParser;
 
-    // Cache context hash to avoid re-sending unchanged source files
     private int contextHash = 0;
 
     public ClaudeRunner(
@@ -29,28 +31,18 @@ public class ClaudeRunner {
             ConversationStore conversationStore,
             ClaudeResponseParser responseParser
     ) {
-        this.claudeClient          = claudeClient;
-        this.sourceFileCollector   = sourceFileCollector;
-        this.contextFileCollector  = contextFileCollector;
-        this.conversationStore     = conversationStore;
-        this.responseParser        = responseParser;
+        this.claudeClient         = claudeClient;
+        this.sourceFileCollector  = sourceFileCollector;
+        this.contextFileCollector = contextFileCollector;
+        this.conversationStore    = conversationStore;
+        this.responseParser       = responseParser;
     }
 
-    /**
-     * Sets the source-file context. Rebuilds the system prompt from:
-     * <ol>
-     *   <li>The base system prompt</li>
-     *   <li>Java source files resolved from the provided classes</li>
-     *   <li>All files found in the {@code context-files/} directory</li>
-     * </ol>
-     * Skips rebuilding if neither the class list nor the context-files directory
-     * content has changed since the last call.
-     */
     public void setContext(List<Class<?>> contextClasses) throws IOException {
         List<SourceFile> contextDirFiles = contextFileCollector.collect();
 
         int hash = contextClasses.hashCode() ^ contextDirFiles.hashCode();
-        if (hash == contextHash) return;   // unchanged — skip prompt rebuild
+        if (hash == contextHash) return;
         contextHash = hash;
 
         List<SourceFile> sourceFiles = sourceFileCollector.collect(contextClasses);
@@ -67,19 +59,12 @@ public class ClaudeRunner {
 
         if (!contextDirFiles.isEmpty()) {
             sb.append("\n\nYou have the following additional context files:\n");
-            for (SourceFile f : contextDirFiles) {
-                sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
-                sb.append(f.content()).append("\n");
-            }
+            sb.append(buildContextSection(contextDirFiles));
         }
 
         conversationStore.setSystemPrompt(sb.toString());
     }
 
-    /**
-     * Send a plain user message. Context should have been set via
-     * {@link #setContext} beforehand; it is NOT re-attached here.
-     */
     public ClaudeResponse run(String model, String userMessage) throws IOException {
         if (conversationStore.getSystemPrompt().isBlank()) {
             conversationStore.setSystemPrompt(BASE_SYSTEM_PROMPT);
@@ -88,15 +73,46 @@ public class ClaudeRunner {
         conversationStore.addUserMessage(userMessage);
 
         ClaudeClient.RawResponse raw = claudeClient.send(model, conversationStore.getMessages());
-        ClaudeResponse response = responseParser.parse(raw.text(), raw.inputTokens(), raw.outputTokens());
+        ClaudeResponse response = responseParser.parse(
+                raw.text(),
+                raw.inputTokens(),
+                raw.outputTokens(),
+                raw.cacheCreationTokens(),
+                raw.cacheReadTokens()
+        );
 
-        // Store compact summary — NOT the full JSON — to keep history small
         conversationStore.addAssistantMessage(buildHistorySummary(response));
 
         return response;
     }
 
     // ------------------------------------------------------------------ private
+
+    private String buildContextSection(List<SourceFile> files) {
+        Path contextRoot = contextFileCollector.getContextRoot();
+
+        Map<String, List<SourceFile>> grouped = new LinkedHashMap<>();
+        for (SourceFile f : files) {
+            Path relative = contextRoot.relativize(f.path());
+            String groupName = (relative.getNameCount() > 1)
+                    ? relative.getName(0).toString()
+                    : null;
+            grouped.computeIfAbsent(groupName, k -> new ArrayList<>()).add(f);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, List<SourceFile>> entry : grouped.entrySet()) {
+            String groupName = entry.getKey();
+            if (groupName != null) {
+                sb.append("\n=== [").append(groupName).append("] ===\n");
+            }
+            for (SourceFile f : entry.getValue()) {
+                sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
+                sb.append(f.content()).append("\n");
+            }
+        }
+        return sb.toString();
+    }
 
     private String buildHistorySummary(ClaudeResponse response) {
         if (response.files().isEmpty()) {

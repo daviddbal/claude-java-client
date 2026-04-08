@@ -9,8 +9,15 @@ public record ClaudeResponse(
         String description,
         List<GeneratedFile> files,
         int inputTokens,
-        int outputTokens
+        int outputTokens,
+        int cacheCreationTokens,
+        int cacheReadTokens
 ) {
+    /** Convenience constructor for non-caching contexts (e.g. tests). */
+    public ClaudeResponse(String description, List<GeneratedFile> files, int inputTokens, int outputTokens) {
+        this(description, files, inputTokens, outputTokens, 0, 0);
+    }
+
     /** Returns true when Claude generated at least one file. */
     public boolean hasFiles() {
         return !files.isEmpty();

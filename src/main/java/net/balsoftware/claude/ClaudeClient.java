@@ -11,9 +11,10 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ClaudeClient {
-    private static final String API_URL = "https://api.anthropic.com/v1/messages";
+    private static final String API_URL           = "https://api.anthropic.com/v1/messages";
     private static final String ANTHROPIC_VERSION = "2023-06-01";
-    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    private static final String BETA_PROMPT_CACHE = "prompt-caching-2024-07-31";
+    private static final MediaType JSON           = MediaType.get("application/json; charset=utf-8");
 
     private final String apiKey;
     private final int maxTokens;
@@ -25,7 +26,7 @@ public class ClaudeClient {
         this.maxTokens = maxTokens;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(120, TimeUnit.SECONDS)   // Claude can be slow on large responses
+                .readTimeout(120, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
         this.objectMapper = new ObjectMapper();
@@ -36,10 +37,16 @@ public class ClaudeClient {
     }
 
     /**
-     * Sends a conversation to Claude. System messages are extracted and sent
-     * in the top-level "system" field. User/assistant turns go in "messages".
+     * Sends a conversation to Claude with prompt caching enabled.
      *
-     * @return RawResponse containing the text content and token usage
+     * <p>The system prompt is sent as a content-block array with a
+     * {@code cache_control: {type: ephemeral}} marker on the last block.
+     * Anthropic will cache everything up to that breakpoint so subsequent
+     * requests with the same system prompt are billed at ~10% of normal
+     * input-token cost.
+     *
+     * @return {@link RawResponse} containing text, normal token counts, and
+     *         cache-specific token counts.
      */
     public RawResponse send(String model, List<ClaudeMessage> messages) throws IOException {
         ObjectNode body = objectMapper.createObjectNode();
@@ -47,7 +54,7 @@ public class ClaudeClient {
         body.put("max_tokens", maxTokens);
 
         StringBuilder systemText = new StringBuilder();
-        ArrayNode messagesArray = objectMapper.createArrayNode();
+        ArrayNode messagesArray  = objectMapper.createArrayNode();
 
         for (ClaudeMessage msg : messages) {
             if (msg.role() == ClaudeRole.SYSTEM) {
@@ -62,8 +69,22 @@ public class ClaudeClient {
         }
 
         if (!systemText.isEmpty()) {
-            body.put("system", systemText.toString());
+            // Prompt caching requires the system field to be an array of
+            // content blocks. The cache breakpoint is placed on the last
+            // (and only) block via cache_control.
+            ArrayNode systemArray  = objectMapper.createArrayNode();
+            ObjectNode systemBlock = objectMapper.createObjectNode();
+            systemBlock.put("type", "text");
+            systemBlock.put("text", systemText.toString());
+
+            ObjectNode cacheControl = objectMapper.createObjectNode();
+            cacheControl.put("type", "ephemeral");
+            systemBlock.set("cache_control", cacheControl);
+
+            systemArray.add(systemBlock);
+            body.set("system", systemArray);
         }
+
         body.set("messages", messagesArray);
 
         String requestJson = objectMapper.writeValueAsString(body);
@@ -72,6 +93,7 @@ public class ClaudeClient {
                 .url(API_URL)
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", ANTHROPIC_VERSION)
+                .header("anthropic-beta", BETA_PROMPT_CACHE)   // enables prompt caching
                 .header("content-type", "application/json")
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
@@ -102,12 +124,28 @@ public class ClaudeClient {
             throw new IOException("No text content found in Claude response: " + responseJson);
         }
 
-        int inputTokens  = root.path("usage").path("input_tokens").asInt(0);
-        int outputTokens = root.path("usage").path("output_tokens").asInt(0);
+        JsonNode usage = root.path("usage");
+        int inputTokens         = usage.path("input_tokens").asInt(0);
+        int outputTokens        = usage.path("output_tokens").asInt(0);
+        int cacheCreationTokens = usage.path("cache_creation_input_tokens").asInt(0);
+        int cacheReadTokens     = usage.path("cache_read_input_tokens").asInt(0);
 
-        return new RawResponse(text, inputTokens, outputTokens);
+        return new RawResponse(text, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
     }
 
-    /** Intermediate carrier for the API response before parsing into ClaudeResponse. */
-    public record RawResponse(String text, int inputTokens, int outputTokens) {}
+    /**
+     * Carrier for the raw API response.
+     *
+     * @param cacheCreationTokens tokens written to the prompt cache this turn
+     *                            (billed at 125% of normal — one-time cost)
+     * @param cacheReadTokens     tokens served from the prompt cache this turn
+     *                            (billed at 10% of normal — the saving)
+     */
+    public record RawResponse(
+            String text,
+            int inputTokens,
+            int outputTokens,
+            int cacheCreationTokens,
+            int cacheReadTokens
+    ) {}
 }

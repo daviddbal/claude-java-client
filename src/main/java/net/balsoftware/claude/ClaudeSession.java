@@ -7,29 +7,26 @@ import java.util.List;
 /**
  * High-level entry point for the Claude coding assistant.
  *
+ * <p>Prompt caching is enabled automatically: the system prompt (context files +
+ * loaded source classes) is sent as a cached content block. After the first
+ * request in a session, Anthropic serves the system-prompt tokens from cache at
+ * ~10% of normal cost.
+ *
  * <pre>{@code
  * ClaudeSession session = ClaudeSession.builder()
  *         .apiKey(System.getenv("ANTHROPIC_API_KEY"))
  *         .model("claude-opus-4-5")
  *         .sourceRoots(List.of(Path.of("src/main/java")))
  *         .outputRoot(Path.of("generated"))
- *         .contextFilesRoot(Path.of("context-files"))   // optional — drop any files here
+ *         .contextFilesRoot(Path.of("context-files"))
  *         .maxTokens(4096)
  *         .build();
  *
  * session.loadContext(List.of(Foo.class, Bar.class));
- *
- * ClaudeResponse r1 = session.ask("Add a toString() to Foo");
- * ClaudeResponse r2 = session.ask("Now add equals() and hashCode() too");
- *
- * session.writeFiles(r2);
+ * ClaudeResponse r = session.ask("Add a toString() to Foo");
+ * session.writeFiles(r);
  * System.out.println(session.tokenSummary());
  * }</pre>
- *
- * <p>The {@code context-files/} directory (configurable via {@link Builder#contextFilesRoot})
- * lives at the same level as {@code generated/}. Drop any file there — Markdown, SQL,
- * YAML, plain text, extra Java sources, etc. — and it will be included in the system
- * prompt automatically.
  */
 public class ClaudeSession {
 
@@ -40,8 +37,10 @@ public class ClaudeSession {
     private final ConversationStore conversationStore;
 
     // Cumulative token tracking
-    private int totalInputTokens  = 0;
-    private int totalOutputTokens = 0;
+    private int totalInputTokens         = 0;
+    private int totalOutputTokens        = 0;
+    private int totalCacheCreationTokens = 0;
+    private int totalCacheReadTokens     = 0;
 
     private ClaudeSession(Builder builder) {
         SourceRootConfig sourceRootConfig = new SourceRootConfig(builder.sourceRoots);
@@ -60,10 +59,7 @@ public class ClaudeSession {
 
     // ------------------------------------------------------------------ context
 
-    /**
-     * Loads source files and context-directory files into the system prompt.
-     * Skips if the context is unchanged. Does NOT count as a conversation turn.
-     */
+    /** Loads source files into the system prompt. Skips if context is unchanged. */
     public void loadContext(List<Class<?>> contextClasses) throws IOException {
         runner.setContext(contextClasses);
     }
@@ -73,8 +69,10 @@ public class ClaudeSession {
     /** Send a message using context already loaded via {@link #loadContext}. */
     public ClaudeResponse ask(String message) throws IOException {
         ClaudeResponse r = runner.run(model, message);
-        totalInputTokens  += r.inputTokens();
-        totalOutputTokens += r.outputTokens();
+        totalInputTokens         += r.inputTokens();
+        totalOutputTokens        += r.outputTokens();
+        totalCacheCreationTokens += r.cacheCreationTokens();
+        totalCacheReadTokens     += r.cacheReadTokens();
         return r;
     }
 
@@ -120,13 +118,30 @@ public class ClaudeSession {
 
     // ------------------------------------------------------------------ token tracking
 
-    /** Returns a human-readable summary of total tokens used this session. */
+    /**
+     * Human-readable token summary including cache efficiency.
+     *
+     * <p>Example output:
+     * <pre>
+     * Total tokens — in: 1200, out: 340 | cache write: 980, cache read: 2940 (saved ~75%)
+     * </pre>
+     */
     public String tokenSummary() {
-        return String.format("Total tokens — in: %d, out: %d", totalInputTokens, totalOutputTokens);
+        int totalIn = totalInputTokens + totalCacheCreationTokens + totalCacheReadTokens;
+        String savingsPct = totalIn > 0
+                ? String.format("%.0f%%", (totalCacheReadTokens * 100.0) / totalIn)
+                : "n/a";
+        return String.format(
+                "Total tokens — in: %d, out: %d | cache write: %d, cache read: %d (saved ~%s)",
+                totalInputTokens, totalOutputTokens,
+                totalCacheCreationTokens, totalCacheReadTokens,
+                savingsPct);
     }
 
-    public int getTotalInputTokens()  { return totalInputTokens; }
-    public int getTotalOutputTokens() { return totalOutputTokens; }
+    public int getTotalInputTokens()         { return totalInputTokens; }
+    public int getTotalOutputTokens()        { return totalOutputTokens; }
+    public int getTotalCacheCreationTokens() { return totalCacheCreationTokens; }
+    public int getTotalCacheReadTokens()     { return totalCacheReadTokens; }
 
     // ------------------------------------------------------------------ builder
 
@@ -134,18 +149,18 @@ public class ClaudeSession {
 
     public static final class Builder {
         private String apiKey;
-        private String model              = "claude-opus-4-5";
+        private String model              = ClaudeModel.DEFAULT;
         private List<Path> sourceRoots    = List.of(Path.of("src/main/java"));
         private Path outputRoot           = Path.of("generated");
         private Path contextFilesRoot     = Path.of("context-files");
-        private int maxTokens             = 4096;
+        private int maxTokens             = 4096*2;
 
-        public Builder apiKey(String apiKey)                  { this.apiKey = apiKey;                   return this; }
-        public Builder model(String model)                    { this.model = model;                     return this; }
-        public Builder sourceRoots(List<Path> roots)          { this.sourceRoots = roots;               return this; }
-        public Builder outputRoot(Path outputRoot)            { this.outputRoot = outputRoot;           return this; }
-        public Builder contextFilesRoot(Path contextFilesRoot){ this.contextFilesRoot = contextFilesRoot; return this; }
-        public Builder maxTokens(int maxTokens)               { this.maxTokens = maxTokens;             return this; }
+        public Builder apiKey(String apiKey)                      { this.apiKey = apiKey;                     return this; }
+        public Builder model(String model)                        { this.model = model;                       return this; }
+        public Builder sourceRoots(List<Path> roots)              { this.sourceRoots = roots;                 return this; }
+        public Builder outputRoot(Path outputRoot)                { this.outputRoot = outputRoot;             return this; }
+        public Builder contextFilesRoot(Path contextFilesRoot)    { this.contextFilesRoot = contextFilesRoot; return this; }
+        public Builder maxTokens(int maxTokens)                   { this.maxTokens = maxTokens;               return this; }
 
         public ClaudeSession build() {
             if (apiKey == null || apiKey.isBlank())

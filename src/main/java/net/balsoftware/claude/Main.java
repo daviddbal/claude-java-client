@@ -4,16 +4,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Scanner;
 
-/**
- * Interactive CLI for the Claude coding assistant.
- *
- * Required env var : CLAUDE_API_KEY
- * Optional env var : CLAUDE_MODEL      (default: claude-haiku-4-5-20251001)
- * Optional env var : CLAUDE_MAX_TOKENS (default: 4096)
- *
- * Drop any files into {@code context-files/} (sibling of {@code generated/}) to
- * include them automatically in every request's system prompt.
- */
 public class Main {
 
     public static void main(String[] args) throws Exception {
@@ -35,12 +25,10 @@ public class Main {
                 .maxTokens(maxTokens)
                 .sourceRoots(List.of(Path.of("src/main/java")))
                 .outputRoot(Path.of("generated"))
-                .contextFilesRoot(Path.of("context-files"))   // drop any files here for extra context
+                .contextFilesRoot(Path.of("context-files"))
                 .build();
 
-        session.loadContext(List.of(
-//                net.balsoftware.trader.TraderParameters.class
-        ));
+        session.loadContext(List.of());
 
         System.out.println("Claude Coding Assistant — model: " + model + " | max_tokens: " + maxTokens);
         System.out.println("Commands:");
@@ -61,42 +49,28 @@ public class Main {
             String line = scanner.nextLine().trim();
 
             switch (line.toLowerCase()) {
-                case "quit" -> { System.out.println("Bye!"); return; }
+                case "quit"  -> { System.out.println("Bye!"); return; }
                 case "reset" -> {
                     session.resetConversation();
                     System.out.println("[Conversation history cleared — context preserved]");
                     continue;
                 }
                 case "write" -> {
-                    if (last == null) {
-                        System.out.println("[No response to write yet]");
-                    } else {
-                        session.writeFiles(last);
-                        System.out.println("[Files written to ./generated/]");
-                    }
+                    if (last == null) System.out.println("[No response to write yet]");
+                    else { session.writeFiles(last); System.out.println("[Files written to ./generated/]"); }
                     continue;
                 }
                 case "show" -> {
-                    if (last == null) {
-                        System.out.println("[No response yet]");
-                    } else if (!last.hasFiles()) {
-                        System.out.println("[No files in last response]");
-                    } else {
-                        last.files().forEach(f -> {
+                    if (last == null)           System.out.println("[No response yet]");
+                    else if (!last.hasFiles())  System.out.println("[No files in last response]");
+                    else last.files().forEach(f -> {
                             System.out.println("\n===== " + f.path() + " =====");
                             System.out.println(f.content());
                         });
-                    }
                     continue;
                 }
-                case "turns" -> {
-                    System.out.println("[Turn pairs in history: " + (session.getTurnCount() / 2) + "]");
-                    continue;
-                }
-                case "tokens" -> {
-                    System.out.println("[" + session.tokenSummary() + "]");
-                    continue;
-                }
+                case "turns"  -> { System.out.println("[Turn pairs in history: " + (session.getTurnCount() / 2) + "]"); continue; }
+                case "tokens" -> { System.out.println("[" + session.tokenSummary() + "]"); continue; }
                 default -> {}
             }
 
@@ -106,8 +80,10 @@ public class Main {
                 last = session.ask(line);
 
                 System.out.println("\nClaude> " + last.description());
-                System.out.printf("[Tokens — this turn: in=%d out=%d | session total: in=%d out=%d]%n",
+                System.out.printf(
+                        "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | session: in=%d out=%d]%n",
                         last.inputTokens(), last.outputTokens(),
+                        last.cacheCreationTokens(), last.cacheReadTokens(),
                         session.getTotalInputTokens(), session.getTotalOutputTokens());
 
                 if (last.hasFiles()) {
