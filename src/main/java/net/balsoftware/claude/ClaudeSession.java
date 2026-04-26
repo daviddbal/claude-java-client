@@ -3,6 +3,7 @@ package net.balsoftware.claude;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * High-level entry point for the Claude coding assistant.
@@ -42,6 +43,9 @@ public class ClaudeSession {
     private int totalCacheCreationTokens = 0;
     private int totalCacheReadTokens     = 0;
 
+    // Track if we've seen a cache hit
+    private boolean cacheHitObserved = false;
+
     private ClaudeSession(Builder builder) {
         SourceRootConfig sourceRootConfig = new SourceRootConfig(builder.sourceRoots);
         this.conversationStore = new ConversationStore();
@@ -64,6 +68,23 @@ public class ClaudeSession {
         runner.setContext(contextClasses);
     }
 
+    /**
+     * Returns a list of all context files that were loaded.
+     * This includes both source files and additional context directory files.
+     */
+    public List<String> getLoadedContextFiles() {
+        List<String> sourceFiles = runner.getLastSourceFiles().stream()
+                .map(sf -> sf.path().toString())
+                .collect(Collectors.toList());
+
+        List<String> contextFiles = runner.getLastContextFiles().stream()
+                .map(sf -> sf.path().toString())
+                .collect(Collectors.toList());
+
+        sourceFiles.addAll(contextFiles);
+        return sourceFiles;
+    }
+
     // ------------------------------------------------------------------ messaging
 
     /** Send a message using context already loaded via {@link #loadContext}. */
@@ -73,6 +94,12 @@ public class ClaudeSession {
         totalOutputTokens        += r.outputTokens();
         totalCacheCreationTokens += r.cacheCreationTokens();
         totalCacheReadTokens     += r.cacheReadTokens();
+
+        // Track if we've hit the cache
+        if (r.cacheReadTokens() > 0) {
+            cacheHitObserved = true;
+        }
+
         return r;
     }
 
@@ -116,14 +143,35 @@ public class ClaudeSession {
         return conversationStore.getTurnCount();
     }
 
-    // ------------------------------------------------------------------ token tracking
+    // ------------------------------------------------------------------ token tracking & cache status
+
+    /**
+     * Returns whether a cache hit has been observed in this session.
+     * True if any request returned cache_read_input_tokens > 0.
+     */
+    public boolean isCacheHitObserved() {
+        return cacheHitObserved;
+    }
+
+    /**
+     * Human-readable cache status (hit or miss).
+     */
+    public String getCacheStatus() {
+        if (totalCacheCreationTokens > 0 && totalCacheReadTokens == 0) {
+            return "CACHE MISS — cache written, not yet used";
+        } else if (totalCacheReadTokens > 0) {
+            return "CACHE HIT ✓ — serving from prompt cache";
+        } else {
+            return "NO CACHE";
+        }
+    }
 
     /**
      * Human-readable token summary including cache efficiency.
      *
      * <p>Example output:
      * <pre>
-     * Total tokens — in: 1200, out: 340 | cache write: 980, cache read: 2940 (saved ~75%)
+     * Total tokens — in: 1200, out: 340 | cache write: 980, cache read: 2940 (saved ~75%) [CACHE HIT ✓]
      * </pre>
      */
     public String tokenSummary() {
@@ -131,11 +179,12 @@ public class ClaudeSession {
         String savingsPct = totalIn > 0
                 ? String.format("%.0f%%", (totalCacheReadTokens * 100.0) / totalIn)
                 : "n/a";
+        String cacheStatus = getCacheStatus();
         return String.format(
-                "Total tokens — in: %d, out: %d | cache write: %d, cache read: %d (saved ~%s)",
+                "Total tokens — in: %d, out: %d | cache write: %d, cache read: %d (saved ~%s) [%s]",
                 totalInputTokens, totalOutputTokens,
                 totalCacheCreationTokens, totalCacheReadTokens,
-                savingsPct);
+                savingsPct, cacheStatus);
     }
 
     public int getTotalInputTokens()         { return totalInputTokens; }

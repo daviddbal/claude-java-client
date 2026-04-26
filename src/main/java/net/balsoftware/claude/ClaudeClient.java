@@ -33,7 +33,7 @@ public class ClaudeClient {
     }
 
     public ClaudeClient(String apiKey) {
-        this(apiKey, 4096);
+        this(apiKey, 4096*4);
     }
 
     /**
@@ -108,29 +108,38 @@ public class ClaudeClient {
     }
 
     private RawResponse parseResponse(String responseJson) throws IOException {
-        JsonNode root = objectMapper.readTree(responseJson);
+        try {
+            JsonNode root = objectMapper.readTree(responseJson);
 
-        String text = null;
-        JsonNode content = root.path("content");
-        if (content.isArray()) {
-            for (JsonNode block : content) {
-                if ("text".equals(block.path("type").asText())) {
-                    text = block.path("text").asText();
-                    break;
+            String text = null;
+            JsonNode content = root.path("content");
+            if (content.isArray()) {
+                for (JsonNode block : content) {
+                    if ("text".equals(block.path("type").asText())) {
+                        text = block.path("text").asText();
+                        break;
+                    }
                 }
             }
-        }
-        if (text == null) {
-            throw new IOException("No text content found in Claude response: " + responseJson);
-        }
+            if (text == null) {
+                throw new IOException("No text content found in Claude response: " + responseJson);
+            }
 
-        JsonNode usage = root.path("usage");
-        int inputTokens         = usage.path("input_tokens").asInt(0);
-        int outputTokens        = usage.path("output_tokens").asInt(0);
-        int cacheCreationTokens = usage.path("cache_creation_input_tokens").asInt(0);
-        int cacheReadTokens     = usage.path("cache_read_input_tokens").asInt(0);
+            JsonNode usage = root.path("usage");
+            int inputTokens         = usage.path("input_tokens").asInt(0);
+            int outputTokens        = usage.path("output_tokens").asInt(0);
+            int cacheCreationTokens = usage.path("cache_creation_input_tokens").asInt(0);
+            int cacheReadTokens     = usage.path("cache_read_input_tokens").asInt(0);
 
-        return new RawResponse(text, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
+            return new RawResponse(text, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
+
+        } catch (IOException e) {
+            System.err.println("=== RAW CLAUDE RESPONSE (truncated) ===");
+            System.err.println(responseJson.substring(0, Math.min(2000, responseJson.length())));
+            System.err.println("=== END RESPONSE ===");
+            e.printStackTrace(); // ← THIS is what you're missing
+            throw e;
+        }
     }
 
     /**

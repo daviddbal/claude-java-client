@@ -24,6 +24,10 @@ public class ClaudeRunner {
 
     private int contextHash = 0;
 
+    // 🔥 ADDED: debug/visibility state
+    private List<SourceFile> lastSourceFiles = List.of();
+    private List<SourceFile> lastContextFiles = List.of();
+
     public ClaudeRunner(
             ClaudeClient claudeClient,
             SourceFileCollector sourceFileCollector,
@@ -39,13 +43,17 @@ public class ClaudeRunner {
     }
 
     public void setContext(List<Class<?>> contextClasses) throws IOException {
+
         List<SourceFile> contextDirFiles = contextFileCollector.collect();
+        List<SourceFile> sourceFiles = sourceFileCollector.collect(contextClasses);
 
         int hash = contextClasses.hashCode() ^ contextDirFiles.hashCode();
         if (hash == contextHash) return;
         contextHash = hash;
 
-        List<SourceFile> sourceFiles = sourceFileCollector.collect(contextClasses);
+        // 🔥 STORE FOR DEBUGGING
+        this.lastSourceFiles = sourceFiles;
+        this.lastContextFiles = contextDirFiles;
 
         StringBuilder sb = new StringBuilder(BASE_SYSTEM_PROMPT);
 
@@ -66,13 +74,16 @@ public class ClaudeRunner {
     }
 
     public ClaudeResponse run(String model, String userMessage) throws IOException {
+
         if (conversationStore.getSystemPrompt().isBlank()) {
             conversationStore.setSystemPrompt(BASE_SYSTEM_PROMPT);
         }
 
         conversationStore.addUserMessage(userMessage);
 
-        ClaudeClient.RawResponse raw = claudeClient.send(model, conversationStore.getMessages());
+        ClaudeClient.RawResponse raw =
+                claudeClient.send(model, conversationStore.getMessages());
+
         ClaudeResponse response = responseParser.parse(
                 raw.text(),
                 raw.inputTokens(),
@@ -86,31 +97,50 @@ public class ClaudeRunner {
         return response;
     }
 
-    // ------------------------------------------------------------------ private
+    // ------------------------------------------------------------------ debug accessors
+
+    public List<SourceFile> getLastSourceFiles() {
+        return lastSourceFiles;
+    }
+
+    public List<SourceFile> getLastContextFiles() {
+        return lastContextFiles;
+    }
+
+    // ------------------------------------------------------------------ private helpers
 
     private String buildContextSection(List<SourceFile> files) {
+
         Path contextRoot = contextFileCollector.getContextRoot();
 
         Map<String, List<SourceFile>> grouped = new LinkedHashMap<>();
+
         for (SourceFile f : files) {
             Path relative = contextRoot.relativize(f.path());
+
             String groupName = (relative.getNameCount() > 1)
                     ? relative.getName(0).toString()
                     : null;
+
             grouped.computeIfAbsent(groupName, k -> new ArrayList<>()).add(f);
         }
 
         StringBuilder sb = new StringBuilder();
+
         for (Map.Entry<String, List<SourceFile>> entry : grouped.entrySet()) {
+
             String groupName = entry.getKey();
+
             if (groupName != null) {
                 sb.append("\n=== [").append(groupName).append("] ===\n");
             }
+
             for (SourceFile f : entry.getValue()) {
                 sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
                 sb.append(f.content()).append("\n");
             }
         }
+
         return sb.toString();
     }
 
@@ -118,9 +148,11 @@ public class ClaudeRunner {
         if (response.files().isEmpty()) {
             return response.description();
         }
+
         String filePaths = response.files().stream()
                 .map(GeneratedFile::path)
                 .collect(Collectors.joining(", "));
+
         return response.description() + " [files: " + filePaths + "]";
     }
 }

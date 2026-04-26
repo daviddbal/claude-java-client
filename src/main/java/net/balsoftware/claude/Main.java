@@ -17,7 +17,7 @@ public class Main {
 //        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-opus-4-6");
 //        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6");
         String model  = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-haiku-4-5-20251001");
-        int maxTokens = Integer.parseInt(System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", "4096"));
+        int maxTokens = Integer.parseInt(System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(4096*4)));
 
         ClaudeSession session = ClaudeSession.builder()
                 .apiKey(apiKey)
@@ -29,6 +29,7 @@ public class Main {
                 .build();
 
         session.loadContext(List.of());
+        printContextFiles(session);
 
         System.out.println("Claude Coding Assistant — model: " + model + " | max_tokens: " + maxTokens);
         System.out.println("Commands:");
@@ -37,6 +38,7 @@ public class Main {
         System.out.println("  show   — print generated file contents to the terminal");
         System.out.println("  turns  — show number of turns in history");
         System.out.println("  tokens — show total token usage this session");
+        System.out.println("  context — show loaded context files");
         System.out.println("  quit   — exit");
         System.out.println("--------------------------------------------------");
         System.out.println("Tip: place any files in ./context-files/ to add them to Claude's context.");
@@ -71,6 +73,10 @@ public class Main {
                 }
                 case "turns"  -> { System.out.println("[Turn pairs in history: " + (session.getTurnCount() / 2) + "]"); continue; }
                 case "tokens" -> { System.out.println("[" + session.tokenSummary() + "]"); continue; }
+                case "context" -> {
+                    printContextFiles(session);
+                    continue;
+                }
                 default -> {}
             }
 
@@ -81,10 +87,10 @@ public class Main {
 
                 System.out.println("\nClaude> " + last.description());
                 System.out.printf(
-                        "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | session: in=%d out=%d]%n",
+                        "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | %s]%n",
                         last.inputTokens(), last.outputTokens(),
                         last.cacheCreationTokens(), last.cacheReadTokens(),
-                        session.getTotalInputTokens(), session.getTotalOutputTokens());
+                        getCacheStatusForResponse(last));
 
                 if (last.hasFiles()) {
                     System.out.println("Generated files:");
@@ -94,6 +100,26 @@ public class Main {
             } catch (Exception e) {
                 System.err.println("[Error] " + e.getMessage());
             }
+        }
+    }
+
+    private static void printContextFiles(ClaudeSession session) {
+        List<String> contextFiles = session.getLoadedContextFiles();
+        if (contextFiles.isEmpty()) {
+            System.out.println("[No context files loaded]");
+        } else {
+            System.out.println("Loaded context files ("+contextFiles.size()+"):");
+            contextFiles.forEach(f -> System.out.println("  " + f));
+        }
+    }
+
+    private static String getCacheStatusForResponse(ClaudeResponse response) {
+        if (response.cacheReadTokens() > 0) {
+            return "CACHE HIT ✓";
+        } else if (response.cacheCreationTokens() > 0) {
+            return "CACHE MISS (written)";
+        } else {
+            return "NO CACHE";
         }
     }
 }
