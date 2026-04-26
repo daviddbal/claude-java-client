@@ -87,12 +87,19 @@ public class ClaudeClient {
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
 
+        System.out.println("[DEBUG] Sending HTTP request...");
+        System.out.flush();
+
         try (Response response = httpClient.newCall(request).execute()) {
+            System.out.println("[DEBUG] HTTP response received (headers only)");
+            System.out.flush();
             if (!response.isSuccessful()) {
                 String errorBody = response.body() != null ? response.body().string() : "(no body)";
                 throw new IOException("Claude API error " + response.code() + ": " + errorBody);
             }
             String responseStr = response.body() != null ? response.body().string() : "";
+            System.out.println("[DEBUG] Finished reading response body");
+            System.out.flush();
             System.out.println("responseStr=" + responseStr.substring(0, 100));
             if (COLLECT_CLAUDE_RAW) {
                 saveRawClaudeResponse(responseStr);
@@ -108,11 +115,11 @@ public class ClaudeClient {
             if (!outDir.exists()) outDir.mkdirs();
             String filename = "response-" + System.currentTimeMillis() + "-" + (int)(Math.random() * 100_000) + ".txt";
             File out = new File(outDir, filename);
-            Files.createDirectories(out.toPath());
+            Files.createDirectories(out.toPath().getParent());
             try (FileWriter fw = new FileWriter(out)) {
                 fw.write(responseStr);
             }
-            System.err.println("Saved raw Claude response to: " + out.getAbsolutePath());
+            System.out.println("Saved raw Claude response to: " + out.getAbsolutePath());
         } catch (IOException ioe) {
             System.err.println("Could not save raw Claude response: " + ioe);
         }

@@ -1,53 +1,98 @@
 package net.balsoftware.claude;
 
 import org.junit.jupiter.api.Test;
+
 import java.io.StringReader;
 import java.util.Scanner;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 class MultiLineInputReaderTest {
 
+    private final MultiLineInputReader reader = new MultiLineInputReader();
+
     @Test
     void testSingleLineInput() {
-        String simulatedInput = "This is a single line\n"; // simulate Enter once
+        String simulatedInput = "hello world\n";
         Scanner scanner = new Scanner(new StringReader(simulatedInput));
 
-        String result = MultiLineInputReader.readMultiLineInput(scanner);
+        String result = reader.read(scanner);
 
-        assertEquals("This is a single line", result);
+        assertEquals("hello world", result);
     }
 
     @Test
-    void testMultiLineInput() {
-        String simulatedInput = "Line 1\nLine 2\nLine 3\n"; // multiple lines
+    void testMultiLineInputWithEndMarker() {
+        String simulatedInput =
+                "::Line 1\n" +
+                        "Line 2\n" +
+                        "Line 3 <<<END\n" +
+                        "ignored\n";
+
         Scanner scanner = new Scanner(new StringReader(simulatedInput));
 
-        String result = MultiLineInputReader.readMultiLineInput(scanner);
+        String result = reader.read(scanner);
 
-        String expected = "Line 1\nLine 2\nLine 3";
-        assertEquals(expected, result);
+        assertEquals("Line 1\nLine 2\nLine 3", result);
     }
 
     @Test
-    void testInputEndingWithoutBlankLines() {
-        String simulatedInput = "Only line with no trailing blank lines";
+    void testEndMarkerMidLine() {
+        String simulatedInput =
+                "::Hello\n" +
+                        "world<<<END\n" +
+                        "ignored\n";
+
         Scanner scanner = new Scanner(new StringReader(simulatedInput));
 
-        String result = MultiLineInputReader.readMultiLineInput(scanner);
+        String result = reader.read(scanner);
 
-        assertEquals("Only line with no trailing blank lines", result);
+        assertEquals("Hello\nworld", result);
+    }
+
+    @Test
+    void testEndMarkerOnlyLine() {
+        String simulatedInput =
+                "::Line 1\n" +
+                        "<<<END\n";
+
+        Scanner scanner = new Scanner(new StringReader(simulatedInput));
+
+        String result = reader.read(scanner);
+
+        assertEquals("Line 1", result);
+    }
+
+    @Test
+    void testInlineContentAfterPrefix() {
+        String simulatedInput =
+                "::Line 1 inline\n" +
+                        "Line 2\n" +
+                        "<<<END\n";
+
+        Scanner scanner = new Scanner(new StringReader(simulatedInput));
+
+        String result = reader.read(scanner);
+
+        assertEquals("Line 1 inline\nLine 2", result);
+    }
+
+    @Test
+    void testEmptyMultiLineBlock() {
+        String simulatedInput =
+                "::<<<END\n";
+
+        Scanner scanner = new Scanner(new StringReader(simulatedInput));
+
+        String result = reader.read(scanner);
+
+        assertEquals("", result);
     }
 
     @Test
     void testCommandRecognition() {
-        String simulatedInput = "reset\n";
-        Scanner scanner = new Scanner(new StringReader(simulatedInput));
-
-        String result = MultiLineInputReader.readMultiLineInput(scanner);
-
-        // Command detection is separate; reader just reads text
-        assertEquals("reset", result);
-        assertEquals(true, MultiLineInputReader.isCommand(result));
+        assertTrue(MultiLineInputReader.isCommand("reset"));
+        assertTrue(MultiLineInputReader.isCommand("write"));
+        assertFalse(MultiLineInputReader.isCommand("hello world"));
     }
 }
