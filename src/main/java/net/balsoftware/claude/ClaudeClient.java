@@ -6,7 +6,10 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import okhttp3.*;
 
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -15,6 +18,7 @@ public class ClaudeClient {
     private static final String ANTHROPIC_VERSION = "2023-06-01";
     private static final String BETA_PROMPT_CACHE = "prompt-caching-2024-07-31";
     private static final MediaType JSON           = MediaType.get("application/json; charset=utf-8");
+    private static final boolean COLLECT_CLAUDE_RAW = true;
 
     private final String apiKey;
     private final int maxTokens;
@@ -36,18 +40,6 @@ public class ClaudeClient {
         this(apiKey, 4096*4);
     }
 
-    /**
-     * Sends a conversation to Claude with prompt caching enabled.
-     *
-     * <p>The system prompt is sent as a content-block array with a
-     * {@code cache_control: {type: ephemeral}} marker on the last block.
-     * Anthropic will cache everything up to that breakpoint so subsequent
-     * requests with the same system prompt are billed at ~10% of normal
-     * input-token cost.
-     *
-     * @return {@link RawResponse} containing text, normal token counts, and
-     *         cache-specific token counts.
-     */
     public RawResponse send(String model, List<ClaudeMessage> messages) throws IOException {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", model);
@@ -69,9 +61,6 @@ public class ClaudeClient {
         }
 
         if (!systemText.isEmpty()) {
-            // Prompt caching requires the system field to be an array of
-            // content blocks. The cache breakpoint is placed on the last
-            // (and only) block via cache_control.
             ArrayNode systemArray  = objectMapper.createArrayNode();
             ObjectNode systemBlock = objectMapper.createObjectNode();
             systemBlock.put("type", "text");
@@ -93,7 +82,7 @@ public class ClaudeClient {
                 .url(API_URL)
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", ANTHROPIC_VERSION)
-                .header("anthropic-beta", BETA_PROMPT_CACHE)   // enables prompt caching
+                .header("anthropic-beta", BETA_PROMPT_CACHE)
                 .header("content-type", "application/json")
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
@@ -103,11 +92,37 @@ public class ClaudeClient {
                 String errorBody = response.body() != null ? response.body().string() : "(no body)";
                 throw new IOException("Claude API error " + response.code() + ": " + errorBody);
             }
-            return parseResponse(response.body().string());
+            String responseStr = response.body() != null ? response.body().string() : "";
+            System.out.println("responseStr=" + responseStr.substring(0, 100));
+            if (COLLECT_CLAUDE_RAW) {
+                saveRawClaudeResponse(responseStr);
+            }
+            return parseResponse(responseStr);
+        }
+    }
+
+    private static void saveRawClaudeResponse(String responseStr) {
+        try {
+            String dir = "collected-claude-responses";
+            File outDir = new File(dir);
+            if (!outDir.exists()) outDir.mkdirs();
+            String filename = "response-" + System.currentTimeMillis() + "-" + (int)(Math.random() * 100_000) + ".txt";
+            File out = new File(outDir, filename);
+            Files.createDirectories(out.toPath());
+            try (FileWriter fw = new FileWriter(out)) {
+                fw.write(responseStr);
+            }
+            System.err.println("Saved raw Claude response to: " + out.getAbsolutePath());
+        } catch (IOException ioe) {
+            System.err.println("Could not save raw Claude response: " + ioe);
         }
     }
 
     private RawResponse parseResponse(String responseJson) throws IOException {
+        if (responseJson == null || responseJson.trim().isEmpty()) {
+            System.err.println("Claude API returned empty response.");
+            return new RawResponse("[Claude API returned no content]", 0, 0, 0, 0);
+        }
         try {
             JsonNode root = objectMapper.readTree(responseJson);
 
@@ -117,12 +132,15 @@ public class ClaudeClient {
                 for (JsonNode block : content) {
                     if ("text".equals(block.path("type").asText())) {
                         text = block.path("text").asText();
+                        if (text == null) text = "";
                         break;
                     }
                 }
             }
             if (text == null) {
-                throw new IOException("No text content found in Claude response: " + responseJson);
+                System.err.println("No text content found in Claude response; raw JSON:");
+                System.err.println(responseJson.substring(0, Math.min(2000, responseJson.length())));
+                return new RawResponse("[Claude API returned unrecognized content format]", 0, 0, 0, 0);
             }
 
             JsonNode usage = root.path("usage");
@@ -133,23 +151,16 @@ public class ClaudeClient {
 
             return new RawResponse(text, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println("=== RAW CLAUDE RESPONSE (truncated) ===");
-            System.err.println(responseJson.substring(0, Math.min(2000, responseJson.length())));
+            if (responseJson != null)
+                System.err.println(responseJson.substring(0, Math.min(2000, responseJson.length())));
             System.err.println("=== END RESPONSE ===");
-            e.printStackTrace(); // ← THIS is what you're missing
-            throw e;
+            e.printStackTrace(System.err);
+            throw new IOException("Failed to parse Claude response: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Carrier for the raw API response.
-     *
-     * @param cacheCreationTokens tokens written to the prompt cache this turn
-     *                            (billed at 125% of normal — one-time cost)
-     * @param cacheReadTokens     tokens served from the prompt cache this turn
-     *                            (billed at 10% of normal — the saving)
-     */
     public record RawResponse(
             String text,
             int inputTokens,

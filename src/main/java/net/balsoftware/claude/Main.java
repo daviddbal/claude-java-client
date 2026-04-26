@@ -14,8 +14,6 @@ public class Main {
             System.exit(1);
         }
 
-//        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-opus-4-6");
-//        String model     = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-sonnet-4-6");
         String model  = System.getenv().getOrDefault("CLAUDE_MODEL", "claude-haiku-4-5-20251001");
         int maxTokens = Integer.parseInt(System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(4096*4)));
 
@@ -42,25 +40,30 @@ public class Main {
         System.out.println("  quit   — exit");
         System.out.println("--------------------------------------------------");
         System.out.println("Tip: place any files in ./context-files/ to add them to Claude's context.");
-        System.out.println("Tip: paste multi-line content, then press Enter twice to send.");
+        System.out.println("(Press Enter after each line. Finish input with Ctrl-D on Unix/macOS or Ctrl-Z on Windows.)");
 
         Scanner scanner = new Scanner(System.in);
         ClaudeResponse last = null;
 
         while (true) {
             System.out.print("\nYou> ");
-            String input = readMultiLineInput(scanner);
+            System.out.flush();
+            String input = MultiLineInputReader.readMultiLineInput(scanner);
+            System.out.println("input=" + input);
+            System.exit(0);
 
             switch (input.toLowerCase()) {
-                case "quit"  -> { System.out.println("Bye!"); return; }
+                case "quit"  -> { System.out.println("Bye!"); System.out.flush(); return; }
                 case "reset" -> {
                     session.resetConversation();
                     System.out.println("[Conversation history cleared — context preserved]");
+                    System.out.flush();
                     continue;
                 }
                 case "write" -> {
                     if (last == null) System.out.println("[No response to write yet]");
                     else { session.writeFiles(last); System.out.println("[Files written to ./generated/]"); }
+                    System.out.flush();
                     continue;
                 }
                 case "show" -> {
@@ -70,12 +73,14 @@ public class Main {
                             System.out.println("\n===== " + f.path() + " =====");
                             System.out.println(f.content());
                         });
+                    System.out.flush();
                     continue;
                 }
-                case "turns"  -> { System.out.println("[Turn pairs in history: " + (session.getTurnCount() / 2) + "]"); continue; }
-                case "tokens" -> { System.out.println("[" + session.tokenSummary() + "]"); continue; }
+                case "turns"  -> { System.out.println("[Turn pairs in history: " + (session.getTurnCount() / 2) + "]"); System.out.flush(); continue; }
+                case "tokens" -> { System.out.println("[" + session.tokenSummary() + "]"); System.out.flush(); continue; }
                 case "context" -> {
                     printContextFiles(session);
+                    System.out.flush();
                     continue;
                 }
                 default -> {}
@@ -100,46 +105,17 @@ public class Main {
                 }
             } catch (Exception e) {
                 System.err.println("[Error] " + e.getMessage());
+                e.printStackTrace(System.err);
             }
+            System.out.flush();
         }
-    }
-
-    /**
-     * Reads multi-line input from the user.
-     * Continues reading lines until an empty line is encountered.
-     * This allows pasting multi-line content from the clipboard.
-     */
-    private static String readMultiLineInput(Scanner scanner) {
-        StringBuilder sb = new StringBuilder();
-        String firstLine = scanner.nextLine().trim();
-        
-        // If first line is a command, return it immediately
-        if (isCommand(firstLine)) {
-            return firstLine;
-        }
-        
-        sb.append(firstLine);
-        
-        // Read additional lines until we hit an empty line
-        while (scanner.hasNextLine()) {
-            String nextLine = scanner.nextLine();
-            
-            // Empty line signals end of multi-line input
-            if (nextLine.trim().isEmpty()) {
-                break;
-            }
-            
-            sb.append("\n").append(nextLine);
-        }
-        
-        return sb.toString().trim();
     }
 
     private static boolean isCommand(String input) {
         String lower = input.toLowerCase().trim();
         return lower.equals("quit") || lower.equals("reset") || lower.equals("write") ||
-               lower.equals("show") || lower.equals("turns") || lower.equals("tokens") ||
-               lower.equals("context");
+                lower.equals("show") || lower.equals("turns") || lower.equals("tokens") ||
+                lower.equals("context");
     }
 
     private static void printContextFiles(ClaudeSession session) {
