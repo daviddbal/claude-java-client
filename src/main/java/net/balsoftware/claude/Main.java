@@ -42,15 +42,16 @@ public class Main {
         System.out.println("  quit   — exit");
         System.out.println("--------------------------------------------------");
         System.out.println("Tip: place any files in ./context-files/ to add them to Claude's context.");
+        System.out.println("Tip: paste multi-line content, then press Enter twice to send.");
 
         Scanner scanner = new Scanner(System.in);
         ClaudeResponse last = null;
 
         while (true) {
             System.out.print("\nYou> ");
-            String line = scanner.nextLine().trim();
+            String input = readMultiLineInput(scanner);
 
-            switch (line.toLowerCase()) {
+            switch (input.toLowerCase()) {
                 case "quit"  -> { System.out.println("Bye!"); return; }
                 case "reset" -> {
                     session.resetConversation();
@@ -80,10 +81,10 @@ public class Main {
                 default -> {}
             }
 
-            if (line.isBlank()) continue;
+            if (input.isBlank()) continue;
 
             try {
-                last = session.ask(line);
+                last = session.ask(input);
 
                 System.out.println("\nClaude> " + last.description());
                 System.out.printf(
@@ -101,6 +102,44 @@ public class Main {
                 System.err.println("[Error] " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Reads multi-line input from the user.
+     * Continues reading lines until an empty line is encountered.
+     * This allows pasting multi-line content from the clipboard.
+     */
+    private static String readMultiLineInput(Scanner scanner) {
+        StringBuilder sb = new StringBuilder();
+        String firstLine = scanner.nextLine().trim();
+        
+        // If first line is a command, return it immediately
+        if (isCommand(firstLine)) {
+            return firstLine;
+        }
+        
+        sb.append(firstLine);
+        
+        // Read additional lines until we hit an empty line
+        while (scanner.hasNextLine()) {
+            String nextLine = scanner.nextLine();
+            
+            // Empty line signals end of multi-line input
+            if (nextLine.trim().isEmpty()) {
+                break;
+            }
+            
+            sb.append("\n").append(nextLine);
+        }
+        
+        return sb.toString().trim();
+    }
+
+    private static boolean isCommand(String input) {
+        String lower = input.toLowerCase().trim();
+        return lower.equals("quit") || lower.equals("reset") || lower.equals("write") ||
+               lower.equals("show") || lower.equals("turns") || lower.equals("tokens") ||
+               lower.equals("context");
     }
 
     private static void printContextFiles(ClaudeSession session) {
