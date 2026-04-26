@@ -11,6 +11,9 @@ public class ClaudeResponseParser {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * Parse a Claude response into a structured ClaudeResponse object.
+     */
     public ClaudeResponse parse(String rawText,
                                 int inputTokens,
                                 int outputTokens,
@@ -30,7 +33,7 @@ public class ClaudeResponseParser {
             trimmed = trimmed.strip();
         }
 
-        // Try to extract JSON block safely (more robust than startsWith)
+        // Extract the first complete JSON block safely
         String jsonCandidate = extractJson(trimmed);
 
         if (jsonCandidate != null) {
@@ -83,17 +86,30 @@ public class ClaudeResponseParser {
     }
 
     /**
-     * Tries to extract a JSON object from mixed model output.
-     * This is far more reliable than "startsWith({)".
+     * Extracts the first complete JSON object from mixed model output.
+     * Balances braces to avoid capturing incomplete JSON fragments.
      */
     private String extractJson(String text) {
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
+        int braceDepth = 0;
+        int startIndex = -1;
 
-        if (start >= 0 && end > start) {
-            return text.substring(start, end + 1);
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') {
+                if (braceDepth == 0) {
+                    startIndex = i; // potential start of JSON
+                }
+                braceDepth++;
+            } else if (c == '}') {
+                braceDepth--;
+                if (braceDepth == 0 && startIndex >= 0) {
+                    // found a complete JSON object
+                    return text.substring(startIndex, i + 1);
+                }
+            }
         }
 
+        // No valid JSON found
         return null;
     }
 
@@ -102,7 +118,7 @@ public class ClaudeResponseParser {
         return s.length() <= max ? s : s.substring(0, max) + "...(truncated)";
     }
 
-    // Overloads unchanged
+    // Overloads for convenience
 
     public ClaudeResponse parse(String rawText, int inputTokens, int outputTokens) throws IOException {
         return parse(rawText, inputTokens, outputTokens, 0, 0);
