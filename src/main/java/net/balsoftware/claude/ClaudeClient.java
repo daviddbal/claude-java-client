@@ -22,12 +22,19 @@ public class ClaudeClient {
 
     private final String apiKey;
     private final int maxTokens;
+    private final String systemPrompt;
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private boolean promptSent = false;
 
-    public ClaudeClient(String apiKey, int maxTokens) {
+    /**
+     * Create a ClaudeClient with a static, cached system prompt.
+     * The prompt will only be sent on the first request in a session.
+     */
+    public ClaudeClient(String apiKey, int maxTokens, String systemPrompt) {
         this.apiKey = apiKey;
         this.maxTokens = maxTokens;
+        this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
@@ -36,35 +43,25 @@ public class ClaudeClient {
         this.objectMapper = new ObjectMapper();
     }
 
-    public ClaudeClient(String apiKey) {
-        this(apiKey, 4096*4);
+    public ClaudeClient(String apiKey, String systemPrompt) {
+        this(apiKey, 4096*4, systemPrompt);
     }
 
-    public RawResponse send(String model, List<ClaudeMessage> messages) throws IOException {
+    /**
+     * Send a request – system prompt is sent with the first call only, then
+     * prompt caching is activated and only conversation turns are sent.
+     */
+    public RawResponse send(String model, List<ClaudeMessage> conversationTurns) throws IOException {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", model);
         body.put("max_tokens", maxTokens);
 
-        StringBuilder systemText = new StringBuilder();
-        ArrayNode messagesArray  = objectMapper.createArrayNode();
-
-        for (ClaudeMessage msg : messages) {
-            if (msg.role() == ClaudeRole.SYSTEM) {
-                if (!systemText.isEmpty()) systemText.append("\n");
-                systemText.append(msg.content());
-            } else {
-                ObjectNode node = objectMapper.createObjectNode();
-                node.put("role", msg.role().name().toLowerCase());
-                node.put("content", msg.content());
-                messagesArray.add(node);
-            }
-        }
-
-        if (!systemText.isEmpty()) {
-            ArrayNode systemArray  = objectMapper.createArrayNode();
+        // Only send the system prompt on the first request after client construction.
+        if (!promptSent && systemPrompt != null && !systemPrompt.isBlank()) {
+            ArrayNode systemArray = objectMapper.createArrayNode();
             ObjectNode systemBlock = objectMapper.createObjectNode();
             systemBlock.put("type", "text");
-            systemBlock.put("text", systemText.toString());
+            systemBlock.put("text", systemPrompt);
 
             ObjectNode cacheControl = objectMapper.createObjectNode();
             cacheControl.put("type", "ephemeral");
@@ -74,6 +71,13 @@ public class ClaudeClient {
             body.set("system", systemArray);
         }
 
+        ArrayNode messagesArray = objectMapper.createArrayNode();
+        for (ClaudeMessage msg : conversationTurns) {
+            ObjectNode node = objectMapper.createObjectNode();
+            node.put("role", msg.role().name().toLowerCase());
+            node.put("content", msg.content());
+            messagesArray.add(node);
+        }
         body.set("messages", messagesArray);
 
         String requestJson = objectMapper.writeValueAsString(body);
@@ -100,10 +104,12 @@ public class ClaudeClient {
             String responseStr = response.body() != null ? response.body().string() : "";
             System.out.println("[DEBUG] Finished reading response body");
             System.out.flush();
-            System.out.println("responseStr=" + responseStr.substring(0, 100));
+            System.out.println("responseStr=" + responseStr.substring(0, Math.min(100, responseStr.length())));
             if (COLLECT_CLAUDE_RAW) {
                 saveRawClaudeResponse(responseStr);
             }
+            // Mark prompt as sent after a successful request with a prompt
+            if (!promptSent) promptSent = true;
             return parseResponse(responseStr);
         }
     }

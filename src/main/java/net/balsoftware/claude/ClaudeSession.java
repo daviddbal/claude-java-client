@@ -8,34 +8,25 @@ import java.util.stream.Collectors;
 /**
  * High-level entry point for the Claude coding assistant.
  *
- * <p>Prompt caching is enabled automatically: the system prompt (context files +
+ * Prompt caching is enabled automatically: the system prompt (context files +
  * loaded source classes) is sent as a cached content block. After the first
  * request in a session, Anthropic serves the system-prompt tokens from cache at
  * ~10% of normal cost.
- *
- * <pre>{@code
- * ClaudeSession session = ClaudeSession.builder()
- *         .apiKey(System.getenv("ANTHROPIC_API_KEY"))
- *         .model("claude-opus-4-5")
- *         .sourceRoots(List.of(Path.of("src/main/java")))
- *         .outputRoot(Path.of("generated"))
- *         .contextFilesRoot(Path.of("context-files"))
- *         .maxTokens(4096)
- *         .build();
- *
- * session.loadContext(List.of(Foo.class, Bar.class));
- * ClaudeResponse r = session.ask("Add a toString() to Foo");
- * session.writeFiles(r);
- * System.out.println(session.tokenSummary());
- * }</pre>
  */
 public class ClaudeSession {
 
-    private final ClaudeRunner runner;
     private final GeneratedFileWriter fileWriter;
     private final Path outputRoot;
     private final String model;
     private final ConversationStore conversationStore;
+    private final ClaudeClientFactory clientFactory; // NEW!
+    private final SourceFileCollector sourceFileCollector;
+    private final ContextFileCollector contextFileCollector;
+    private final ClaudeResponseParser responseParser;
+
+    private List<Class<?>> loadedContextClasses = null;
+    private String cachedSystemPrompt = "";
+    private ClaudeRunner runner; // Will be rebuilt on context load
 
     // Cumulative token tracking
     private int totalInputTokens         = 0;
@@ -43,70 +34,97 @@ public class ClaudeSession {
     private int totalCacheCreationTokens = 0;
     private int totalCacheReadTokens     = 0;
 
-    // Track if we've seen a cache hit
     private boolean cacheHitObserved = false;
 
     private ClaudeSession(Builder builder) {
         SourceRootConfig sourceRootConfig = new SourceRootConfig(builder.sourceRoots);
-        this.conversationStore = new ConversationStore();
-        this.runner = new ClaudeRunner(
-                new ClaudeClient(builder.apiKey, builder.maxTokens),
-                new SourceFileCollector(sourceRootConfig),
-                new ContextFileCollector(builder.contextFilesRoot),
-                conversationStore,
-                new ClaudeResponseParser()
-        );
-        this.fileWriter = new GeneratedFileWriter();
-        this.outputRoot = builder.outputRoot;
-        this.model      = builder.model;
+        this.conversationStore    = new ConversationStore();
+        this.sourceFileCollector  = new SourceFileCollector(sourceRootConfig);
+        this.contextFileCollector = new ContextFileCollector(builder.contextFilesRoot);
+        this.responseParser       = new ClaudeResponseParser();
+        this.fileWriter           = new GeneratedFileWriter();
+        this.outputRoot           = builder.outputRoot;
+        this.model                = builder.model;
+        this.clientFactory        = new ClaudeClientFactory(builder.apiKey, builder.maxTokens); // NEW!
     }
 
     // ------------------------------------------------------------------ context
 
     /** Loads source files into the system prompt. Skips if context is unchanged. */
     public void loadContext(List<Class<?>> contextClasses) throws IOException {
-        runner.setContext(contextClasses);
+        if (contextClasses.equals(loadedContextClasses)) return;
+        loadedContextClasses = contextClasses;
+
+        // Build static system prompt with context (from ClaudeRunner logic)
+        List<SourceFile> contextDirFiles = contextFileCollector.collect();
+        List<SourceFile> sourceFiles = sourceFileCollector.collect(contextClasses);
+
+        StringBuilder sb = new StringBuilder(ClaudeRunner.BASE_SYSTEM_PROMPT);
+
+        if (!sourceFiles.isEmpty()) {
+            sb.append("\n\nYou have the following source files as context:\n");
+            for (SourceFile f : sourceFiles) {
+                sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
+                sb.append(f.content()).append("\n");
+            }
+        }
+
+        if (!contextDirFiles.isEmpty()) {
+            sb.append("\n\nYou have the following additional context files:\n");
+            sb.append(buildContextSection(contextDirFiles));
+        }
+
+        this.cachedSystemPrompt = sb.toString();
+
+        // REPLACE ClaudeClient and runner with updated system prompt
+        ClaudeClient client = clientFactory.create(cachedSystemPrompt);
+        this.runner = new ClaudeRunner(
+                client,
+                sourceFileCollector,
+                contextFileCollector,
+                conversationStore,
+                responseParser
+        );
     }
 
-    /**
-     * Returns a list of all context files that were loaded.
-     * This includes both source files and additional context directory files.
-     */
+    private String buildContextSection(List<SourceFile> files) {
+        Path contextRoot = contextFileCollector.getContextRoot();
+        StringBuilder sb = new StringBuilder();
+        for (SourceFile f : files) {
+            sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
+            sb.append(f.content()).append("\n");
+        }
+        return sb.toString();
+    }
+
     public List<String> getLoadedContextFiles() {
+        if (runner == null) return List.of();
         List<String> sourceFiles = runner.getLastSourceFiles().stream()
                 .map(sf -> sf.path().toString())
                 .collect(Collectors.toList());
-
         List<String> contextFiles = runner.getLastContextFiles().stream()
                 .map(sf -> sf.path().toString())
                 .collect(Collectors.toList());
-
         sourceFiles.addAll(contextFiles);
         return sourceFiles;
     }
 
     // ------------------------------------------------------------------ messaging
 
-    /** Send a message using context already loaded via {@link #loadContext}. */
     public ClaudeResponse ask(String message) throws IOException {
+        if (runner == null)
+            throw new IllegalStateException("You must call loadContext() before ask.");
+
         ClaudeResponse r = runner.run(model, message);
         totalInputTokens         += r.inputTokens();
         totalOutputTokens        += r.outputTokens();
         totalCacheCreationTokens += r.cacheCreationTokens();
         totalCacheReadTokens     += r.cacheReadTokens();
 
-        // Track if we've hit the cache
-        if (r.cacheReadTokens() > 0) {
-            cacheHitObserved = true;
-        }
-
+        if (r.cacheReadTokens() > 0) cacheHitObserved = true;
         return r;
     }
 
-    /**
-     * Convenience: load context and ask in one call.
-     * Context is only rebuilt if the class list has changed.
-     */
     public ClaudeResponse ask(String message, List<Class<?>> contextClasses) throws IOException {
         loadContext(contextClasses);
         return ask(message);
@@ -114,12 +132,10 @@ public class ClaudeSession {
 
     // ------------------------------------------------------------------ file writing
 
-    /** Write generated files from a response to {@code outputRoot}. */
     public void writeFiles(ClaudeResponse response) throws IOException {
         fileWriter.writeAll(outputRoot, response);
     }
 
-    /** Convenience: ask and immediately write any returned files. */
     public ClaudeResponse askAndWrite(String message) throws IOException {
         ClaudeResponse response = ask(message);
         writeFiles(response);
@@ -128,34 +144,27 @@ public class ClaudeSession {
 
     // ------------------------------------------------------------------ history
 
-    /** Clear turn history while keeping the loaded context in the system prompt. */
     public void resetConversation() {
         conversationStore.clearTurns();
     }
 
-    /** Clear everything — context and history. */
     public void resetAll() {
         conversationStore.clearAll();
+        loadedContextClasses = null;
+        runner = null;
+        cachedSystemPrompt = "";
     }
 
-    /** How many user/assistant messages are currently in history. */
     public int getTurnCount() {
         return conversationStore.getTurnCount();
     }
 
     // ------------------------------------------------------------------ token tracking & cache status
 
-    /**
-     * Returns whether a cache hit has been observed in this session.
-     * True if any request returned cache_read_input_tokens > 0.
-     */
     public boolean isCacheHitObserved() {
         return cacheHitObserved;
     }
 
-    /**
-     * Human-readable cache status (hit or miss).
-     */
     public String getCacheStatus() {
         if (totalCacheCreationTokens > 0 && totalCacheReadTokens == 0) {
             return "CACHE MISS — cache written, not yet used";
@@ -166,14 +175,6 @@ public class ClaudeSession {
         }
     }
 
-    /**
-     * Human-readable token summary including cache efficiency.
-     *
-     * <p>Example output:
-     * <pre>
-     * Total tokens — in: 1200, out: 340 | cache write: 980, cache read: 2940 (saved ~75%) [CACHE HIT ✓]
-     * </pre>
-     */
     public String tokenSummary() {
         int totalIn = totalInputTokens + totalCacheCreationTokens + totalCacheReadTokens;
         String savingsPct = totalIn > 0
@@ -215,6 +216,22 @@ public class ClaudeSession {
             if (apiKey == null || apiKey.isBlank())
                 throw new IllegalStateException("apiKey must be set");
             return new ClaudeSession(this);
+        }
+    }
+
+    /**
+     * Factory object to build ClaudeClient with a fixed prompt and tokens.
+     * Used to "swap in" new client whenever prompt/context changes.
+     */
+    public static class ClaudeClientFactory {
+        private final String apiKey;
+        private final int maxTokens;
+        public ClaudeClientFactory(String apiKey, int maxTokens) {
+            this.apiKey = apiKey;
+            this.maxTokens = maxTokens;
+        }
+        public ClaudeClient create(String systemPrompt) {
+            return new ClaudeClient(apiKey, maxTokens, systemPrompt);
         }
     }
 }

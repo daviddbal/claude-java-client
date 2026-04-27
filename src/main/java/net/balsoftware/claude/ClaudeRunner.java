@@ -8,9 +8,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * Runner for sending questions/messages to Claude using a static system prompt.
+ *
+ * The system prompt (built from context files/classes) is passed once to ClaudeClient,
+ * which will then only send user/assistant messages and use prompt caching.
+ */
 public class ClaudeRunner {
 
-    private static final String BASE_SYSTEM_PROMPT =
+    static final String BASE_SYSTEM_PROMPT =
             "You are a senior Java software engineer assistant. " +
                     "When asked to generate or modify code, respond ONLY with valid JSON:\n" +
                     "{\"description\":\"<summary>\",\"files\":[{\"path\":\"<path>\",\"content\":\"<full file content>\"}]}\n" +
@@ -22,9 +28,11 @@ public class ClaudeRunner {
     private final ConversationStore conversationStore;
     private final ClaudeResponseParser responseParser;
 
+    // Static context that gets cached
+    private String cachedSystemPrompt = "";
     private int contextHash = 0;
 
-    // 🔥 ADDED: debug/visibility state
+    // Debug visibility
     private List<SourceFile> lastSourceFiles = List.of();
     private List<SourceFile> lastContextFiles = List.of();
 
@@ -42,19 +50,27 @@ public class ClaudeRunner {
         this.responseParser       = responseParser;
     }
 
+    /**
+     * Load and cache context files and source files into a single static system prompt.
+     * Only rebuilds if the input class set changes.
+     */
     public void setContext(List<Class<?>> contextClasses) throws IOException {
 
         List<SourceFile> contextDirFiles = contextFileCollector.collect();
         List<SourceFile> sourceFiles = sourceFileCollector.collect(contextClasses);
 
         int hash = contextClasses.hashCode() ^ contextDirFiles.hashCode();
-        if (hash == contextHash) return;
+        if (hash == contextHash) {
+            // Context unchanged, don't rebuild
+            return;
+        }
         contextHash = hash;
 
-        // 🔥 STORE FOR DEBUGGING
+        // Store for debugging
         this.lastSourceFiles = sourceFiles;
         this.lastContextFiles = contextDirFiles;
 
+        // Build the static system prompt (only done once per context)
         StringBuilder sb = new StringBuilder(BASE_SYSTEM_PROMPT);
 
         if (!sourceFiles.isEmpty()) {
@@ -70,19 +86,33 @@ public class ClaudeRunner {
             sb.append(buildContextSection(contextDirFiles));
         }
 
-        conversationStore.setSystemPrompt(sb.toString());
+        // Set this system prompt only once, then pass to ClaudeClient
+        this.cachedSystemPrompt = sb.toString();
+
+        // Create a new client per context bump, or better: require restart if context changes.
+        // But here, for flexibility, we require you to create a new ClaudeClient with the new prompt if desired.
+        // (Don't mutate ClaudeClient's prompt after construction.)
+        // If you want auto-recreation, add a claudeClient = new ClaudeClient(...)
+        // But session framework ensures 1 system prompt per session.
     }
 
+    /**
+     * Run a request with cached system prompt and dynamic conversation turns.
+     * This ensures the system prompt stays constant and gets cached by Claude.
+     */
     public ClaudeResponse run(String model, String userMessage) throws IOException {
+        if (cachedSystemPrompt.isBlank()) throw new IllegalStateException(
+                "System prompt/context must be set by calling setContext() before run().");
 
-        if (conversationStore.getSystemPrompt().isBlank()) {
-            conversationStore.setSystemPrompt(BASE_SYSTEM_PROMPT);
-        }
-
+        // Add user message to conversation history
         conversationStore.addUserMessage(userMessage);
 
+        // Get only the conversation turns (no system prompt)
+        List<ClaudeMessage> conversationTurns = conversationStore.getTurns();
+
+        // Only send system prompt once! (handled by ClaudeClient)
         ClaudeClient.RawResponse raw =
-                claudeClient.send(model, conversationStore.getMessages());
+                claudeClient.send(model, conversationTurns);
 
         ClaudeResponse response = responseParser.parse(
                 raw.text(),
@@ -92,6 +122,7 @@ public class ClaudeRunner {
                 raw.cacheReadTokens()
         );
 
+        // Add assistant response to history (without touching the system prompt)
         conversationStore.addAssistantMessage(buildHistorySummary(response));
 
         return response;
@@ -110,9 +141,7 @@ public class ClaudeRunner {
     // ------------------------------------------------------------------ private helpers
 
     private String buildContextSection(List<SourceFile> files) {
-
         Path contextRoot = contextFileCollector.getContextRoot();
-
         Map<String, List<SourceFile>> grouped = new LinkedHashMap<>();
 
         for (SourceFile f : files) {

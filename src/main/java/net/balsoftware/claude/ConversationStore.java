@@ -35,6 +35,19 @@ public class ConversationStore {
 
     // ------------------------------------------------------------------ retrieval
 
+    /**
+     * Returns only the conversation turns (user/assistant messages).
+     * Does NOT include the system prompt.
+     * Use this when sending to Claude with a separate system prompt.
+     */
+    public List<ClaudeMessage> getTurns() {
+        return Collections.unmodifiableList(new ArrayList<>(turns));
+    }
+
+    /**
+     * Returns all messages including the system prompt.
+     * For backwards compatibility only — prefer getTurns() + separate system prompt.
+     */
     public List<ClaudeMessage> getMessages() {
         List<ClaudeMessage> all = new ArrayList<>();
         if (!systemPrompt.isBlank()) {
