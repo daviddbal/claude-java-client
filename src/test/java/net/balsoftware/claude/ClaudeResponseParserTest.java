@@ -14,42 +14,87 @@ class ClaudeResponseParserTest {
     void parsesDescriptionAndFiles() throws IOException {
         String json = """
                 {
+                  "type": "code",
                   "description": "Added toString method",
                   "files": [
                     { "path": "src/Foo.java", "content": "public class Foo {}" }
                   ]
                 }
                 """;
-        ClaudeResponse r = parser.parse(json, 100, 50);
+        ClaudeStructuredResponse r = parser.parseStructured(json);
+
         assertEquals("Added toString method", r.description());
         assertEquals(1, r.files().size());
         assertEquals("src/Foo.java", r.files().get(0).path());
-        assertEquals(100, r.inputTokens());
-        assertEquals(50,  r.outputTokens());
+        assertEquals("public class Foo {}", r.files().get(0).content());
     }
 
     @Test
     void parsesMultipleFiles() throws IOException {
         String json = """
-                { "description": "Two files", "files": [
+                {
+                  "type": "code",
+                  "description": "Two files",
+                  "files": [
                     { "path": "A.java", "content": "class A {}" },
                     { "path": "B.java", "content": "class B {}" }
-                ]}""";
-        assertEquals(2, parser.parse(json).files().size());
+                  ]
+                }
+                """;
+
+        ClaudeStructuredResponse r = parser.parseStructured(json);
+        assertEquals(2, r.files().size());
+        assertEquals("A.java", r.files().get(0).path());
+        assertEquals("B.java", r.files().get(1).path());
     }
 
     @Test
     void parsesEmptyFiles() throws IOException {
         String json = """
-                { "description": "Nothing", "files": [] }""";
-        ClaudeResponse r = parser.parse(json);
+            {
+              "type": "explanation",
+              "description": "Nothing",
+              "content": "Nothing to explain",
+              "files": []
+            }
+            """;
+
+        ClaudeStructuredResponse r = parser.parseStructured(json);
         assertTrue(r.files().isEmpty());
-        assertEquals(0, r.inputTokens());
+        assertEquals("Nothing", r.description());
+        assertEquals("Nothing to explain", r.content());
     }
 
     @Test
     void missingDescriptionDefaultsToEmpty() throws IOException {
-        assertEquals("", parser.parse("""
-                { "files": [] }""").description());
+        String json = """
+                {
+                  "type": "explanation",
+                  "files": []
+                }
+                """;
+
+        ClaudeStructuredResponse r = parser.parseStructured(json);
+        assertEquals("", r.description() == null ? "" : r.description());
+        assertTrue(r.files().isEmpty());
+    }
+
+    @Test
+    void parsesCodeWithExplanation() throws IOException {
+        String json = """
+                {
+                  "type": "code_with_explanation",
+                  "description": "Example with explanation",
+                  "explanation": "This explains the code",
+                  "files": [
+                    { "path": "Example.java", "content": "class Example {}" }
+                  ]
+                }
+                """;
+
+        ClaudeStructuredResponse r = parser.parseStructured(json);
+        assertEquals("Example with explanation", r.description());
+        assertEquals("This explains the code", r.explanation());
+        assertEquals(1, r.files().size());
     }
 }

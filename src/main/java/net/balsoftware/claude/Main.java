@@ -25,6 +25,12 @@ public class Main {
                 System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(4096 * 4))
         );
 
+        ClaudeClientFactory factory = config -> new ClaudeClient(
+                config.apiKey(),
+                config.maxTokens(),
+                config.systemPrompt()
+        );
+
         ClaudeSession session = ClaudeSession.builder()
                 .apiKey(apiKey)
                 .model(model)
@@ -32,6 +38,7 @@ public class Main {
                 .sourceRoots(List.of(Path.of("src/main/java")))
                 .outputRoot(Path.of("generated"))
                 .contextFilesRoot(Path.of("context-files"))
+                .clientFactory(factory)
                 .build();
 
         session.loadContext(List.of());
@@ -55,7 +62,8 @@ public class Main {
 
         Scanner scanner = new Scanner(System.in);
         InputReader inputReader = new MultiLineInputReader();
-        ClaudeResponse last = null;
+
+        ClaudeStructuredResponseWithTokens last = null; // updated to WithTokens
 
         while (true) {
             System.out.print("\nYou> ");
@@ -63,9 +71,6 @@ public class Main {
 
             String input = inputReader.read(scanner);
 
-            // ----------------------------
-            // COMMANDS
-            // ----------------------------
             switch (input.toLowerCase()) {
                 case "quit" -> {
                     System.out.println("Bye!");
@@ -77,20 +82,25 @@ public class Main {
                     continue;
                 }
                 case "write" -> {
-                    if (last == null) System.out.println("[No response to write yet]");
-                    else {
+                    if (last == null) {
+                        System.out.println("[No response to write yet]");
+                    } else {
                         session.writeFiles(last);
                         System.out.println("[Files written to ./generated/]");
                     }
                     continue;
                 }
                 case "show" -> {
-                    if (last == null) System.out.println("[No response yet]");
-                    else if (!last.hasFiles()) System.out.println("[No files in last response]");
-                    else last.files().forEach(f -> {
+                    if (last == null) {
+                        System.out.println("[No response yet]");
+                    } else if (!last.hasFiles()) {
+                        System.out.println("[No files in last response]");
+                    } else {
+                        last.files().forEach(f -> {
                             System.out.println("\n===== " + f.path() + " =====");
                             System.out.println(f.content());
                         });
+                    }
                     continue;
                 }
                 case "turns" -> {
@@ -112,9 +122,10 @@ public class Main {
 
             try {
                 System.out.println("[DEBUG] Calling session.ask()");
-                last = session.ask(input);
+                last = session.ask(input); // Now returns ClaudeStructuredResponseWithTokens
 
-                System.out.println("\nClaude> " + last.description());
+                System.out.println("\nClaude> " +
+                        (last.description() != null ? last.description() : "[No description]"));
 
                 System.out.printf(
                         "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | %s]%n",
@@ -122,7 +133,7 @@ public class Main {
                         last.outputTokens(),
                         last.cacheCreationTokens(),
                         last.cacheReadTokens(),
-                        getCacheStatusForResponse(last)
+                        session.isCacheHitObserved() ? "CACHE HIT ✓" : "NO CACHE"
                 );
 
                 if (last.hasFiles()) {
@@ -145,16 +156,6 @@ public class Main {
         } else {
             System.out.println("Loaded context files (" + contextFiles.size() + "):");
             contextFiles.forEach(f -> System.out.println("  " + f));
-        }
-    }
-
-    private static String getCacheStatusForResponse(ClaudeResponse response) {
-        if (response.cacheReadTokens() > 0) {
-            return "CACHE HIT ✓";
-        } else if (response.cacheCreationTokens() > 0) {
-            return "CACHE MISS (written)";
-        } else {
-            return "NO CACHE";
         }
     }
 }

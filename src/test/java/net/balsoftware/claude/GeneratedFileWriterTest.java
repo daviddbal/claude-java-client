@@ -14,11 +14,20 @@ class GeneratedFileWriterTest {
 
     private final GeneratedFileWriter writer = new GeneratedFileWriter();
 
+    private static ClaudeStructuredResponseWithTokens responseWithFiles(List<ClaudeStructuredResponse.FileItem> files) {
+        var response = new ClaudeStructuredResponse(
+                ClaudeStructuredResponse.Type.code, // type doesn't matter here
+                "desc", "content", null,
+                files
+        );
+        // Token counts arbitrary for file writing
+        return new ClaudeStructuredResponseWithTokens(response, 1, 1, 1, 1);
+    }
+
     @Test
     void writesFileToCorrectPath(@TempDir Path tempDir) throws IOException {
-        ClaudeResponse response = new ClaudeResponse("ok",
-                List.of(new GeneratedFile("com/example/Foo.java", "class Foo {}")), 0, 0);
-
+        var file = new ClaudeStructuredResponse.FileItem("com/example/Foo.java", "class Foo {}");
+        var response = responseWithFiles(List.of(file));
         writer.writeAll(tempDir, response);
 
         Path written = tempDir.resolve("com/example/Foo.java");
@@ -28,8 +37,8 @@ class GeneratedFileWriterTest {
 
     @Test
     void createsIntermediateDirectories(@TempDir Path tempDir) throws IOException {
-        ClaudeResponse response = new ClaudeResponse("ok",
-                List.of(new GeneratedFile("a/b/c/D.java", "class D {}")), 0, 0);
+        var file = new ClaudeStructuredResponse.FileItem("a/b/c/D.java", "class D {}");
+        var response = responseWithFiles(List.of(file));
 
         writer.writeAll(tempDir, response);
 
@@ -38,10 +47,11 @@ class GeneratedFileWriterTest {
 
     @Test
     void writesMultipleFiles(@TempDir Path tempDir) throws IOException {
-        ClaudeResponse response = new ClaudeResponse("ok", List.of(
-                new GeneratedFile("A.java", "class A {}"),
-                new GeneratedFile("B.java", "class B {}")
-        ), 0, 0);
+        var files = List.of(
+                new ClaudeStructuredResponse.FileItem("A.java", "class A {}"),
+                new ClaudeStructuredResponse.FileItem("B.java", "class B {}")
+        );
+        var response = responseWithFiles(files);
 
         writer.writeAll(tempDir, response);
 
