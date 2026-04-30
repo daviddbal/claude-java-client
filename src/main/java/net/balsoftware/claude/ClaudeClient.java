@@ -2,9 +2,14 @@ package net.balsoftware.claude;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import okhttp3.*;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -14,10 +19,11 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ClaudeClient {
-    private static final String API_URL           = "https://api.anthropic.com/v1/messages";
+
+    private static final String API_URL = "https://api.anthropic.com/v1/messages";
     private static final String ANTHROPIC_VERSION = "2023-06-01";
     private static final String BETA_PROMPT_CACHE = "prompt-caching-2024-07-31";
-    private static final MediaType JSON           = MediaType.get("application/json; charset=utf-8");
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final boolean COLLECT_CLAUDE_RAW = true;
 
     private final String apiKey;
@@ -25,40 +31,34 @@ public class ClaudeClient {
     private final String systemPrompt;
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private boolean promptSent = false;
 
-    /**
-     * Create a ClaudeClient with a static, cached system prompt.
-     * The prompt will only be sent on the first request in a session.
-     */
     public ClaudeClient(String apiKey, int maxTokens, String systemPrompt) {
         this.apiKey = apiKey;
         this.maxTokens = maxTokens;
         this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
+
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build();
+
         this.objectMapper = new ObjectMapper();
+        this.objectMapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
     }
 
     public ClaudeClient(String apiKey, String systemPrompt) {
-        this(apiKey, 4096*4, systemPrompt);
+        this(apiKey, 4096 * 4, systemPrompt);
     }
 
-    /**
-     * Send a request – system prompt is sent with the first call only, then
-     * prompt caching is activated and only conversation turns are sent.
-     */
     public RawResponse send(String model, List<ClaudeMessage> conversationTurns) throws IOException {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", model);
         body.put("max_tokens", maxTokens);
 
-        // Only send the system prompt on the first request after client construction.
-        if (!promptSent && systemPrompt != null && !systemPrompt.isBlank()) {
+        if (!systemPrompt.isBlank()) {
             ArrayNode systemArray = objectMapper.createArrayNode();
+
             ObjectNode systemBlock = objectMapper.createObjectNode();
             systemBlock.put("type", "text");
             systemBlock.put("text", systemPrompt);
@@ -81,6 +81,11 @@ public class ClaudeClient {
         body.set("messages", messagesArray);
 
         String requestJson = objectMapper.writeValueAsString(body);
+        String requestId = System.currentTimeMillis() + "-" + (int) (Math.random() * 100_000);
+
+        if (COLLECT_CLAUDE_RAW) {
+            saveRaw("collected-claude-requests", "request", requestId, requestJson);
+        }
 
         Request request = new Request.Builder()
                 .url(API_URL)
@@ -91,87 +96,60 @@ public class ClaudeClient {
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
 
-        System.out.println("[DEBUG] Sending HTTP request...");
-        System.out.flush();
-
         try (Response response = httpClient.newCall(request).execute()) {
-            System.out.println("[DEBUG] HTTP response received (headers only)");
-            System.out.flush();
             if (!response.isSuccessful()) {
                 String errorBody = response.body() != null ? response.body().string() : "(no body)";
                 throw new IOException("Claude API error " + response.code() + ": " + errorBody);
             }
+
             String responseStr = response.body() != null ? response.body().string() : "";
-            System.out.println("[DEBUG] Finished reading response body");
-            System.out.flush();
-            System.out.println("responseStr=" + responseStr.substring(0, Math.min(100, responseStr.length())));
+
             if (COLLECT_CLAUDE_RAW) {
-                saveRawClaudeResponse(responseStr);
+                saveRaw("collected-claude-responses", "response", requestId, responseStr);
             }
-            // Mark prompt as sent after a successful request with a prompt
-            if (!promptSent) promptSent = true;
+
             return parseResponse(responseStr);
         }
     }
 
-    private static void saveRawClaudeResponse(String responseStr) {
+    private static void saveRaw(String dirName, String prefix, String requestId, String content) {
         try {
-            String dir = "collected-claude-responses";
-            File outDir = new File(dir);
+            File outDir = new File(dirName);
             if (!outDir.exists()) outDir.mkdirs();
-            String filename = "response-" + System.currentTimeMillis() + "-" + (int)(Math.random() * 100_000) + ".txt";
-            File out = new File(outDir, filename);
+
+            File out = new File(outDir, prefix + "-" + requestId + ".json");
             Files.createDirectories(out.toPath().getParent());
+
             try (FileWriter fw = new FileWriter(out)) {
-                fw.write(responseStr);
+                fw.write(content);
             }
-            System.out.println("Saved raw Claude response to: " + out.getAbsolutePath());
         } catch (IOException ioe) {
-            System.err.println("Could not save raw Claude response: " + ioe);
+            System.err.println("Could not save " + prefix + ": " + ioe);
         }
     }
 
     private RawResponse parseResponse(String responseJson) throws IOException {
-        if (responseJson == null || responseJson.trim().isEmpty()) {
-            System.err.println("Claude API returned empty response.");
-            return new RawResponse("[Claude API returned no content]", 0, 0, 0, 0);
-        }
-        try {
-            JsonNode root = objectMapper.readTree(responseJson);
+        JsonNode root = objectMapper.readTree(responseJson);
 
-            String text = null;
-            JsonNode content = root.path("content");
-            if (content.isArray()) {
-                for (JsonNode block : content) {
-                    if ("text".equals(block.path("type").asText())) {
-                        text = block.path("text").asText();
-                        if (text == null) text = "";
-                        break;
-                    }
+        String text = "";
+        JsonNode content = root.path("content");
+        if (content.isArray()) {
+            for (JsonNode block : content) {
+                if ("text".equals(block.path("type").asText())) {
+                    text = block.path("text").asText("");
+                    break;
                 }
             }
-            if (text == null) {
-                System.err.println("No text content found in Claude response; raw JSON:");
-                System.err.println(responseJson.substring(0, Math.min(2000, responseJson.length())));
-                return new RawResponse("[Claude API returned unrecognized content format]", 0, 0, 0, 0);
-            }
-
-            JsonNode usage = root.path("usage");
-            int inputTokens         = usage.path("input_tokens").asInt(0);
-            int outputTokens        = usage.path("output_tokens").asInt(0);
-            int cacheCreationTokens = usage.path("cache_creation_input_tokens").asInt(0);
-            int cacheReadTokens     = usage.path("cache_read_input_tokens").asInt(0);
-
-            return new RawResponse(text, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
-
-        } catch (Exception e) {
-            System.err.println("=== RAW CLAUDE RESPONSE (truncated) ===");
-            if (responseJson != null)
-                System.err.println(responseJson.substring(0, Math.min(2000, responseJson.length())));
-            System.err.println("=== END RESPONSE ===");
-            e.printStackTrace(System.err);
-            throw new IOException("Failed to parse Claude response: " + e.getMessage(), e);
         }
+
+        JsonNode usage = root.path("usage");
+        return new RawResponse(
+                text,
+                usage.path("input_tokens").asInt(0),
+                usage.path("output_tokens").asInt(0),
+                usage.path("cache_creation_input_tokens").asInt(0),
+                usage.path("cache_read_input_tokens").asInt(0)
+        );
     }
 
     public record RawResponse(

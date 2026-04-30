@@ -18,7 +18,7 @@ public class Main {
 
         String model = System.getenv().getOrDefault(
                 "CLAUDE_MODEL",
-                "claude-haiku-4-5-20251001"
+                ClaudeModel.defaultModel().id()
         );
 
         int maxTokens = Integer.parseInt(

@@ -7,7 +7,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * High-level entry point for the Claude coding assistant.
+ * High-level entry point for the Claude coding assistant,
+ * with prompt and response caching to save tokens/money.
  */
 public class ClaudeSession {
 
@@ -34,9 +35,12 @@ public class ClaudeSession {
     private int totalCacheReadTokens     = 0;
     private boolean cacheHitObserved     = false;
 
-    // Prompt cache keyed by context + static files hash
+    // Prompt cache keyed by context hash
     private final Map<Integer, String> promptCache = new ConcurrentHashMap<>();
     private int lastStaticFilesHash = 0;
+
+    // Response cache keyed by (static files hash + user message)
+    private final Map<Integer, ClaudeStructuredResponseWithTokens> responseCache = new ConcurrentHashMap<>();
 
     private ClaudeSession(Builder builder) {
         this.apiKey = builder.apiKey;
@@ -81,6 +85,7 @@ public class ClaudeSession {
         loadedContextClasses = dynamicContextClasses;
         lastStaticFilesHash = contextHash;
 
+        // Prompt cache
         cachedSystemPrompt = promptCache.get(contextHash);
         if (cachedSystemPrompt == null) {
             StringBuilder sb = new StringBuilder(ClaudeStructuredResponse.buildSystemPrompt());
@@ -118,20 +123,36 @@ public class ClaudeSession {
         }
     }
 
-// ---------------- messaging ----------------
+    // ---------------- messaging ----------------
+
+    private int computeCacheKey(String userMessage) {
+        return Objects.hash(lastStaticFilesHash, userMessage);
+    }
 
     public ClaudeStructuredResponseWithTokens ask(String message) throws IOException {
         if (runner == null)
             throw new IllegalStateException("loadContext() must be called first.");
 
+        int key = computeCacheKey(message);
+
+        // Try reading from cache first
+        ClaudeStructuredResponseWithTokens cached = responseCache.get(key);
+        if (cached != null) {
+            totalCacheReadTokens += cached.inputTokens() + cached.outputTokens();
+            cacheHitObserved = true;
+            return cached;
+        }
+
+        // Not cached, send to Claude
         ClaudeStructuredResponseWithTokens response = runner.runStructured(model, message);
 
-        // Update token tracking
+        // Save the response in cache
+        responseCache.put(key, response);
+
+        // Track tokens normally
         totalInputTokens         += response.inputTokens();
         totalOutputTokens        += response.outputTokens();
-        totalCacheCreationTokens += response.cacheCreationTokens();
-        totalCacheReadTokens     += response.cacheReadTokens();
-        if (response.cacheReadTokens() > 0) cacheHitObserved = true;
+        totalCacheCreationTokens += response.inputTokens() + response.outputTokens();
 
         return response;
     }
@@ -141,8 +162,7 @@ public class ClaudeSession {
         return ask(message);
     }
 
-
-// ---------------- file writing ----------------
+    // ---------------- file writing ----------------
 
     public void writeFiles(ClaudeStructuredResponseWithTokens response) throws IOException {
         fileWriter.writeAll(outputRoot, response);
@@ -165,6 +185,9 @@ public class ClaudeSession {
         cachedSystemPrompt = "";
         lastStaticFilesHash = 0;
         promptCache.clear();
+        responseCache.clear();
+        totalInputTokens = totalOutputTokens = totalCacheCreationTokens = totalCacheReadTokens = 0;
+        cacheHitObserved = false;
     }
 
     public int getTurnCount() { return conversationStore.getTurnCount(); }
@@ -194,7 +217,7 @@ public class ClaudeSession {
 
     public static final class Builder {
         private String apiKey;
-        private String model              = ClaudeModel.DEFAULT;
+        private String model              = ClaudeModel.defaultModel().id();
         private List<Path> sourceRoots    = List.of(Path.of("src/main/java"));
         private Path outputRoot           = Path.of("generated");
         private Path contextFilesRoot     = Path.of("context-files");
@@ -219,6 +242,8 @@ public class ClaudeSession {
             return new ClaudeSession(this);
         }
     }
+
+    // ---------------- context inspection ----------------
 
     public List<String> getLoadedContextFiles() {
         if (runner == null) return List.of();

@@ -74,7 +74,7 @@ class ClaudeRunnerTest {
                 .thenReturn(rawResponse(json, 200, 80));
 
         runner.setContext(List.of(String.class));
-        ClaudeStructuredResponseWithTokens r = runner.runStructured(ClaudeModel.HAIKU, "Do something");
+        ClaudeStructuredResponseWithTokens r = runner.runStructured(ClaudeModel.defaultModel().id(), "Do something");
 
         assertEquals("done", r.description());
         assertEquals(1, r.files().size());
@@ -88,8 +88,8 @@ class ClaudeRunnerTest {
         when(mockClient.send(anyString(), anyList())).thenReturn(rawResponse(json, 10, 5));
 
         runner.setContext(List.of(String.class));
-        runner.runStructured(ClaudeModel.HAIKU, "Turn 1");
-        runner.runStructured(ClaudeModel.HAIKU, "Turn 2");
+        runner.runStructured(ClaudeModel.defaultModel().id(), "Turn 1");
+        runner.runStructured(ClaudeModel.defaultModel().id(), "Turn 2");
 
         // Only the assistant messages after run() are added
         assertEquals(4, store.getTurnCount());
@@ -99,7 +99,7 @@ class ClaudeRunnerTest {
     void propagatesClientException() throws IOException {
         when(mockClient.send(anyString(), anyList())).thenThrow(new IOException("network error"));
         runner.setContext(List.of(String.class));
-        assertThrows(IOException.class, () -> runner.runStructured(ClaudeModel.HAIKU, "fail"));
+        assertThrows(IOException.class, () -> runner.runStructured(ClaudeModel.defaultModel().id(), "fail"));
     }
 
     @Test
@@ -109,7 +109,7 @@ class ClaudeRunnerTest {
                 .thenReturn(new ClaudeClient.RawResponse(json, 50, 20, 980, 0));
 
         runner.setContext(List.of(String.class));
-        ClaudeStructuredResponseWithTokens r = runner.runStructured(ClaudeModel.HAIKU, "First call — cache written");
+        ClaudeStructuredResponseWithTokens r = runner.runStructured(ClaudeModel.defaultModel().id(), "First call — cache written");
 
         assertEquals(980, r.cacheCreationTokens());
         assertEquals(0, r.cacheReadTokens());
@@ -117,7 +117,7 @@ class ClaudeRunnerTest {
         when(mockClient.send(anyString(), anyList()))
                 .thenReturn(new ClaudeClient.RawResponse(json, 50, 20, 0, 980));
 
-        ClaudeStructuredResponseWithTokens r2 = runner.runStructured(ClaudeModel.HAIKU, "Second call — cache hit");
+        ClaudeStructuredResponseWithTokens r2 = runner.runStructured(ClaudeModel.defaultModel().id(), "Second call — cache hit");
 
         assertEquals(0, r2.cacheCreationTokens());
         assertEquals(980, r2.cacheReadTokens());
@@ -190,7 +190,7 @@ class ClaudeRunnerTest {
                 mockContextCollector, store,
                 new ClaudeResponseParser(),
                 initialConfig, List.of());
-        assertThrows(IllegalStateException.class, () -> runner.runStructured(ClaudeModel.HAIKU, "Hello"));
+        assertThrows(IllegalStateException.class, () -> runner.runStructured(ClaudeModel.defaultModel().id(), "Hello"));
     }
 
     @Test
@@ -198,7 +198,7 @@ class ClaudeRunnerTest {
         runner.setContext(List.of(String.class));
         when(mockClient.send(anyString(), anyList())).thenReturn(rawResponse("{}", 0, 0));
 
-        ClaudeStructuredResponseWithTokens response = runner.runStructured(ClaudeModel.HAIKU, "Hello");
+        ClaudeStructuredResponseWithTokens response = runner.runStructured(ClaudeModel.defaultModel().id(), "Hello");
         assertNotNull(response);
     }
 }
