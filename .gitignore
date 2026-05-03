@@ -1,0 +1,23 @@
+# Secrets
+.env*
+
+# Build
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+
+# Generated output (your app)
+generated/
+collected-claude-requests/
+collected-claude-responses/
+context-files/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
