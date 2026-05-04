@@ -75,10 +75,11 @@ class ClaudeResponseParserTest {
         }
         """;
 
-        // Expect an exception because explanation has no content
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
+        // Expect an IOException wrapping IllegalStateException
+        IOException ex = assertThrows(IOException.class, () -> {
             parser.parseStructured(json);
         });
+        assertTrue(ex.getMessage().contains("Failed to parse LLM JSON response"));
     }
 
     @Test

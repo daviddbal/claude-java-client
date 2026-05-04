@@ -1,108 +1,107 @@
 package net.balsoftware.claude;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.commons.text.StringEscapeUtils;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 public class ClaudeResponseParser {
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS, true)
+            .configure(JsonParser.Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER, true);
 
     public ClaudeStructuredResponse parseStructured(String rawText) throws IOException {
+        String cleaned = sanitize(rawText);
+        String jsonCandidate = extractJson(cleaned);
 
-        if (rawText == null || rawText.isBlank()) {
-            throw new IOException("Claude response is empty");
+        if (jsonCandidate == null) {
+            return fallback(cleaned);
         }
 
-        String trimmed = rawText.strip();
-
-        // Remove code fences if present
-        if (trimmed.startsWith("```")) {
-            trimmed = trimmed.replaceFirst("^```[a-zA-Z]*\\s*", "");
-            trimmed = trimmed.replaceFirst("```\\s*$", "");
-            trimmed = trimmed.strip();
-        }
-
-        String jsonCandidate = extractJson(trimmed);
-
-        if (jsonCandidate != null) {
+        try {
+            // Attempt standard parse first
+            return parseJson(jsonCandidate);
+        } catch (IllegalStateException e) {
+            // Validation error — wrap and propagate
+            throw new IOException("Failed to parse LLM JSON response: " + e.getMessage(), e);
+        } catch (Exception e) {
+            // If standard parse fails, try the robust unescape path
             try {
-                JsonNode root = objectMapper.readTree(jsonCandidate);
+                String unescapedCandidate = robustUnescape(jsonCandidate);
+                return parseJson(unescapedCandidate);
+            } catch (IllegalStateException validationError) {
+                // Validation failed after unescape
+                throw new IOException("Failed to parse LLM JSON response: " + validationError.getMessage(), validationError);
+            } catch (Exception ex) {
+                System.err.println("--- PARSE ERROR ---");
+                System.err.println("Original: " + jsonCandidate);
+                throw new IOException("Failed to parse LLM JSON response after robust unescape", ex);
+            }
+        }
+    }
 
-                // ---------------- TYPE ----------------
-                ClaudeStructuredResponse.Type type = root.has("type")
-                        ? ClaudeStructuredResponse.Type.valueOf(root.get("type").textValue())
-                        : ClaudeStructuredResponse.Type.explanation;
+    private ClaudeStructuredResponse parseJson(String json) throws Exception {
+        JsonNode root = objectMapper.readTree(json);
 
-                // ---------------- DESCRIPTION ----------------
-                String description = Objects.requireNonNullElse(root.path("description").textValue(), "");
+        ClaudeStructuredResponse.Type type = root.has("type")
+                ? ClaudeStructuredResponse.Type.valueOf(root.get("type").asText())
+                : ClaudeStructuredResponse.Type.explanation;
 
-                // ---------------- FILES ----------------
-                List<ClaudeStructuredResponse.FileItem> files = new ArrayList<>();
-                JsonNode filesNode = root.path("files");
-                if (filesNode.isArray()) {
-                    for (JsonNode f : filesNode) {
-                        files.add(new ClaudeStructuredResponse.FileItem(
-                                f.path("path").textValue(),
-                                f.path("content").textValue()
-                        ));
-                    }
-                }
+        String desc = root.path("description").asText("");
+        List<ClaudeStructuredResponse.FileItem> files = new ArrayList<>();
 
-                ClaudeStructuredResponse response = new ClaudeStructuredResponse(
-                        type,
-                        description,
-                        files
-                );
-
-                // validate
-                ClaudeStructuredResponse.validate(response);
-
-                return response;
-
-            } catch (Exception e) {
-                System.err.println("⚠️ Failed to parse JSON from Claude response:");
-                System.err.println(truncate(jsonCandidate, 2000));
-                throw e; // <-- propagate the exception to the test
+        JsonNode filesNode = root.path("files");
+        if (filesNode.isArray()) {
+            for (JsonNode f : filesNode) {
+                files.add(new ClaudeStructuredResponse.FileItem(
+                        f.path("path").asText(),
+                        f.path("content").asText()
+                ));
             }
         }
 
-        // ---------------- FALLBACK ----------------
-        // Treat raw output as explanation-only metadata
+        ClaudeStructuredResponse response = new ClaudeStructuredResponse(type, desc, files);
+        ClaudeStructuredResponse.validate(response);
+        return response;
+    }
+
+    // Removes markdown backticks/quotes and leading/trailing whitespace.
+    private String sanitize(String input) {
+        if (input == null) return "";
+        // Remove markdown code fences
+        String result = input.replaceAll("(?s)^(`{3,}|'{3,})\\w*\\s*", "");
+        result = result.replaceAll("(`{3,}|'{3,})\\s*$", "");
+        return result.trim();
+    }
+
+    // Extracts the first {...} block.
+    private String extractJson(String text) {
+        int start = text.indexOf('{');
+        int end = text.lastIndexOf('}');
+        if (start == -1 || end == -1 || start >= end) return null;
+        return text.substring(start, end + 1).trim();
+    }
+
+    // Robust unescaping: only triggers if standard parsing fails.
+    private String robustUnescape(String s) {
+        String candidate = s.trim();
+        // Remove outer quotes if the entire block was wrapped in a string
+        if (candidate.startsWith("\"") && candidate.endsWith("\"") && candidate.length() > 2) {
+            candidate = candidate.substring(1, candidate.length() - 1);
+        }
+        // Unescape Java/JSON escaping sequences
+        return StringEscapeUtils.unescapeJava(candidate);
+    }
+
+    private ClaudeStructuredResponse fallback(String text) {
         return new ClaudeStructuredResponse(
                 ClaudeStructuredResponse.Type.explanation,
-                trimmed,
+                text,
                 List.of()
         );
-    }
-
-    // ---------------- JSON EXTRACTION ----------------
-    private String extractJson(String text) {
-        int depth = 0;
-        int start = -1;
-
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-
-            if (c == '{') {
-                if (depth == 0) start = i;
-                depth++;
-            } else if (c == '}') {
-                depth--;
-                if (depth == 0 && start != -1) {
-                    return text.substring(start, i + 1);
-                }
-            }
-        }
-        return null;
-    }
-
-    private String truncate(String s, int max) {
-        if (s == null) return null;
-        return s.length() <= max ? s : s.substring(0, max) + "...(truncated)";
     }
 }
