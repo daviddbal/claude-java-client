@@ -6,14 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public class ClaudeResponseParser {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * Parse a Claude response into a structured ClaudeStructuredResponse object.
-     */
     public ClaudeStructuredResponse parseStructured(String rawText) throws IOException {
 
         if (rawText == null || rawText.isBlank()) {
@@ -35,30 +33,33 @@ public class ClaudeResponseParser {
             try {
                 JsonNode root = objectMapper.readTree(jsonCandidate);
 
+                // ---------------- TYPE ----------------
                 ClaudeStructuredResponse.Type type = root.has("type")
-                        ? ClaudeStructuredResponse.Type.valueOf(root.get("type").asText())
-                        : null;
+                        ? ClaudeStructuredResponse.Type.valueOf(root.get("type").textValue())
+                        : ClaudeStructuredResponse.Type.explanation;
 
-                String description = root.path("description").asText(null);
-                String content = root.path("content").asText(null);
-                String explanation = root.path("explanation").asText(null);
+                // ---------------- DESCRIPTION ----------------
+                String description = Objects.requireNonNullElse(root.path("description").textValue(), "");
 
+                // ---------------- FILES ----------------
                 List<ClaudeStructuredResponse.FileItem> files = new ArrayList<>();
                 JsonNode filesNode = root.path("files");
                 if (filesNode.isArray()) {
                     for (JsonNode f : filesNode) {
                         files.add(new ClaudeStructuredResponse.FileItem(
-                                f.path("path").asText(null),
-                                f.path("content").asText(null)
+                                f.path("path").textValue(),
+                                f.path("content").textValue()
                         ));
                     }
                 }
 
                 ClaudeStructuredResponse response = new ClaudeStructuredResponse(
-                        type, description, content, explanation, files
+                        type,
+                        description,
+                        files
                 );
 
-                // Validate required fields for the type
+                // validate
                 ClaudeStructuredResponse.validate(response);
 
                 return response;
@@ -66,36 +67,34 @@ public class ClaudeResponseParser {
             } catch (Exception e) {
                 System.err.println("⚠️ Failed to parse JSON from Claude response:");
                 System.err.println(truncate(jsonCandidate, 2000));
-                e.printStackTrace();
+                throw e; // <-- propagate the exception to the test
             }
         }
 
-        // Fallback: treat as explanation-only plain text
+        // ---------------- FALLBACK ----------------
+        // Treat raw output as explanation-only metadata
         return new ClaudeStructuredResponse(
                 ClaudeStructuredResponse.Type.explanation,
-                null,
                 trimmed,
-                null,
                 List.of()
         );
     }
 
-    /**
-     * Extracts the first complete JSON object from mixed model output.
-     */
+    // ---------------- JSON EXTRACTION ----------------
     private String extractJson(String text) {
-        int braceDepth = 0;
-        int startIndex = -1;
+        int depth = 0;
+        int start = -1;
 
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
+
             if (c == '{') {
-                if (braceDepth == 0) startIndex = i;
-                braceDepth++;
+                if (depth == 0) start = i;
+                depth++;
             } else if (c == '}') {
-                braceDepth--;
-                if (braceDepth == 0 && startIndex >= 0) {
-                    return text.substring(startIndex, i + 1);
+                depth--;
+                if (depth == 0 && start != -1) {
+                    return text.substring(start, i + 1);
                 }
             }
         }

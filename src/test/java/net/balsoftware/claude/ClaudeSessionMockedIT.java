@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ClaudeSessionMockedIT {
 
     // A test ClaudeClient that doesn't do HTTP, just records/invents responses
-    public static class MockClaudeClient extends ClaudeClient {
+    public static class MockClaudeClient extends OKHttpClaudeClient {
         public MockClaudeClient(String apiKey, int maxTokens, String systemPrompt) {
             super(apiKey, maxTokens, systemPrompt);
         }

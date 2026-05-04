@@ -57,13 +57,13 @@ class ClaudeSessionPromptCacheTest {
 
     static class FakeClaudeClientFactory implements ClaudeClientFactory {
         @Override
-        public ClaudeClient createClient(ClaudeClientConfig config) {
-            return new FakeClaudeClient(config);
+        public OKHttpClaudeClient createClient(ClaudeClientConfig config) {
+            return new FakeOKHttpClaudeClient(config);
         }
     }
 
-    static class FakeClaudeClient extends ClaudeClient {
-        FakeClaudeClient(ClaudeClientConfig config) {
+    static class FakeOKHttpClaudeClient extends OKHttpClaudeClient {
+        FakeOKHttpClaudeClient(ClaudeClientConfig config) {
             super(config.apiKey(), config.maxTokens(), config.systemPrompt());
         }
 

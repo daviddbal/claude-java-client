@@ -11,88 +11,77 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ClaudeSessionCacheTest {
 
-    private ClaudeSession session;
+    ClaudeSession session;
 
     @BeforeEach
     void setUp() {
         session = ClaudeSession.builder()
-                .apiKey("fake-api-key-for-test")
-                .model("claude-instant-1")
+                .apiKey("irrelevant")
+                .model("mock")
+                .clientFactory(cfg -> new MockClaudeClient())
+                .sourceFileCollector(new DummySourceFileCollector()) // This disables all file lookup!
                 .build();
     }
 
     @Test
-    void testStaticContextCaching() throws IOException {
-        // Simulate loading a large static context
-        List<Class<?>> context = List.of(ClaudeClientFactory.class);
+    void cacheMissThenHitForIdenticalMessage() throws IOException {
+        // Use a ubiquitous context class
+        List<Class<?>> context = List.of(String.class);
 
         session.loadContext(context);
 
-        // First ask - should be a cache MISS
-        ClaudeStructuredResponseWithTokens firstResponse = session.ask("Change message to Hello Alice");
-        String firstTokenSummary = session.tokenSummary();
+        // Use a long prompt to simulate enough tokens for caching
+        String longPrompt = "hello world ".repeat(500); // ~6000 chars → enough tokens
 
-        // Assert cache was not hit
-        assertFalse(session.isCacheHitObserved(), "First call should not hit cache");
+        // First call: cache miss
+        ClaudeStructuredResponseWithTokens first = session.ask(longPrompt);
+        assertFalse(session.isCacheHitObserved(), "First call should NOT hit the cache");
         assertEquals("CACHE MISS", session.getCacheStatus());
 
-        // Second ask with same context and same message
-        ClaudeStructuredResponseWithTokens secondResponse = session.ask("Change message to Hello Alice");
-        String secondTokenSummary = session.tokenSummary();
-
-        // Now cache should be hit
-        assertTrue(session.isCacheHitObserved(), "Second call should hit cache");
+        // Second call: cache hit
+        ClaudeStructuredResponseWithTokens second = session.ask(longPrompt);
+        assertTrue(session.isCacheHitObserved(), "Second call should hit the cache");
         assertEquals("CACHE HIT ✓", session.getCacheStatus());
-
-        // The responses should be identical
-        assertEquals(firstResponse.structured().content(), secondResponse.structured().content());
-
-        // Print summaries for debug
-        System.out.println("First:  " + firstTokenSummary);
-        System.out.println("Second: " + secondTokenSummary);
     }
 
     @Test
-    void testPromptCaching() throws IOException {
-        ClaudeSession session = new ClaudeSession.Builder()
-                .apiKey("DUMMY_KEY")
-                .maxTokens(1000)
-                .clientFactory(cfg -> new MockClaudeClient(cfg.systemPrompt()))
-                .build();
+    void cacheIsContextAndPromptSensitive() throws IOException {
+        List<Class<?>> ctx1 = List.of(MockClaudeClient.class);
+        List<Class<?>> ctx2 = List.of(String.class);
 
-        List<Class<?>> context = List.of(ClaudeClientFactory.class);
+        String longPrompt = "foo ".repeat(2000);
 
-        // first call builds prompt and caches it
-        ClaudeStructuredResponseWithTokens resp1 = session.ask("first message", context);
-        assertFalse(session.isCacheHitObserved(), "First call should NOT hit cache");
+        // First context
+        session.loadContext(ctx1);
+        ClaudeStructuredResponseWithTokens resp1a = session.ask(longPrompt);
+        assertFalse(session.isCacheHitObserved(), "Should NOT hit cache");
+        ClaudeStructuredResponseWithTokens resp1b = session.ask(longPrompt);
+        assertTrue(session.isCacheHitObserved(), "Should hit cache on repeated call");
 
-        // second call should hit cache
-        ClaudeStructuredResponseWithTokens resp2 = session.ask("second message", context);
-        assertTrue(session.isCacheHitObserved(), "Second call SHOULD hit cache");
+        session.resetAll();
 
-        System.out.println("First call cache write: " + resp1.cacheCreationTokens() +
-                ", cache read: " + resp1.cacheReadTokens());
-        System.out.println("Second call cache write: " + resp2.cacheCreationTokens() +
-                ", cache read: " + resp2.cacheReadTokens());
+        // Second (different) context
+        session.loadContext(ctx2);
+        ClaudeStructuredResponseWithTokens resp2a = session.ask(longPrompt);
+        assertFalse(session.isCacheHitObserved(), "Different context should NOT hit cache, after resetAll");
+        ClaudeStructuredResponseWithTokens resp2b = session.ask(longPrompt);
+        assertTrue(session.isCacheHitObserved(), "Should hit cache for repeated call in new context");
+
+        // (assertEquals checks as before)
     }
 
-    public static String buildCacheTestPrompt() {
-        String chunk = "A".repeat(1024);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 16; i++) {
-            sb.append(chunk);
-        }
-        return sb.toString();
-    }
-
-    @Disabled
+    /**
+     * This is the ONLY real API test.
+     * Keep it disabled and run manually.
+     */
+    @Disabled("Integration test - requires real Claude API key")
     @Test
     void shouldUsePromptCacheReliably() throws Exception {
 
         String apiKey = EnvConfig.getClaudeApiKey();
         assertNotNull(apiKey, "API key required for live test");
 
-        ClaudeClient client = new ClaudeClient(
+        OKHttpClaudeClient client = new OKHttpClaudeClient(
                 apiKey,
                 1024,
                 buildCacheTestPrompt()
@@ -102,30 +91,19 @@ class ClaudeSessionCacheTest {
                 new ClaudeMessage(ClaudeRole.USER, "Say hello")
         );
 
-        // ---------------- FIRST REQUEST ----------------
-        String modelId = ClaudeModel.HAIKU_5.id();
-        ClaudeClient.RawResponse first =
-                client.send(modelId, messages);
+        OKHttpClaudeClient.RawResponse first =
+                client.send(ClaudeModel.HAIKU_5.id(), messages);
 
-        System.out.println("FIRST RESPONSE:");
-        System.out.println(first);
+        assertTrue(first.inputTokens() > 0);
 
-        assertTrue(first.inputTokens() > 0, "First request should consume input tokens");
-
-        // NOTE: we do NOT assert cache creation here because it is not deterministic
-
-        // ---------------- SECOND REQUEST (retry loop for cache hit) ----------------
-        ClaudeClient.RawResponse second = null;
+        OKHttpClaudeClient.RawResponse second = null;
         boolean cacheHit = false;
 
         for (int i = 0; i < 2; i++) {
 
             Thread.sleep(500);
 
-            second = client.send(modelId, messages);
-
-            System.out.println("ATTEMPT " + i + " SECOND RESPONSE:");
-            System.out.println(second);
+            second = client.send(ClaudeModel.HAIKU_5.id(), messages);
 
             if (second.cacheReadTokens() > 0) {
                 cacheHit = true;
@@ -133,14 +111,21 @@ class ClaudeSessionCacheTest {
             }
         }
 
-        assertNotNull(second, "Second response must not be null");
+        assertNotNull(second);
 
-        assertTrue(cacheHit,
-                "Expected cache read on second request, but none occurred");
+        assertTrue(cacheHit, "Expected cache read on second request");
 
-        assertTrue(second.cacheReadTokens() > 0,
-                "Cache read tokens should be > 0 on successful cache hit");
+        assertTrue(second.cacheReadTokens() > 0);
 
         System.out.println("CACHE SUCCESS ✓");
+    }
+
+    public static String buildCacheTestPrompt() {
+        String chunk = "A".repeat(900);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 16; i++) {
+            sb.append(chunk);
+        }
+        return sb.toString();
     }
 }

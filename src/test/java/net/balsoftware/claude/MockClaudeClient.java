@@ -1,37 +1,41 @@
 package net.balsoftware.claude;
 
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * MockClaudeClient simulates ClaudeClient for testing prompt caching.
- */
-public class MockClaudeClient extends ClaudeClient {
-    private boolean firstCall = true;
+public class MockClaudeClient implements ClaudeClient {
 
-    public MockClaudeClient(String systemPrompt) {
-        super("DUMMY_KEY", 1000, systemPrompt);
+    private final int minCacheTokens;
+
+    public MockClaudeClient() {
+        this(4096);
+    }
+
+    public MockClaudeClient(int minCacheTokens) {
+        this.minCacheTokens = minCacheTokens;
     }
 
     @Override
-    public RawResponse send(String model, List<ClaudeMessage> conversationTurns) {
-        if (firstCall) {
-            firstCall = false;
-            return new RawResponse(
-                    "mock response 1",
-                    10,   // input tokens
-                    5,    // output tokens
-                    10,   // cache creation tokens
-                    0     // cache read tokens
-            );
-        } else {
-            return new RawResponse(
-                    "mock response 2",
-                    5,
-                    3,
-                    0,
-                    10    // cache read tokens
-            );
-        }
+    public OKHttpClaudeClient.RawResponse send(String model, List<ClaudeMessage> conversationTurns) {
+        String prompt = conversationTurns.get(conversationTurns.size() - 1).content();
+        int inputTokens = conversationTurns.stream()
+                .mapToInt(msg -> msg.content().length())
+                .sum();
+        int outputTokens = 10;
+
+        // Only "cacheable" if input tokens meet threshold, like Claude
+        boolean largeEnoughForCache = inputTokens >= minCacheTokens;
+
+        OKHttpClaudeClient.RawResponse response = new OKHttpClaudeClient.RawResponse(
+                "mock: " + prompt,
+                inputTokens,
+                outputTokens,
+                largeEnoughForCache ? inputTokens : 0, // cacheCreationTokens
+                0  // cacheReadTokens: always zero, session deals with cache hit
+        );
+
+        // ---------------- LOGGING ----------------
+        ClaudeLogger.logResponse(model, prompt, response);
+
+        return response;
     }
 }

@@ -4,7 +4,7 @@ import java.util.List;
 
 public class ClaudeSessionTest {
     public static void main(String[] args) throws Exception {
-        ClaudeClientFactory factory = config -> new ClaudeClient(config.apiKey(), config.maxTokens(), config.systemPrompt());
+        ClaudeClientFactory factory = config -> new OKHttpClaudeClient(config.apiKey(), config.maxTokens(), config.systemPrompt());
         ClaudeSession session = ClaudeSession.builder()
                 .apiKey("DUMMY_KEY")
                 .clientFactory(factory)
@@ -14,7 +14,7 @@ public class ClaudeSessionTest {
         session.loadContext(List.of()); // ensures system prompt is set
 
         // Debug print
-        System.out.println("BASE: '" + ClaudeStructuredResponse.buildSystemPrompt() + "'");
+        System.out.println("BASE: '" + ClaudeSystemPrompt.build() + "'");
         System.out.println("Runner cached: '" + session.getRunner().getCachedSystemPrompt() + "'");
 
         // This cannot throw if BASE_SYSTEM_PROMPT is non-blank

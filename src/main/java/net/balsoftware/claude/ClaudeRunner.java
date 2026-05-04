@@ -71,7 +71,7 @@ public class ClaudeRunner {
     }
 
     private String buildFullSystemPrompt(List<SourceFile> sourceFiles, List<SourceFile> contextFiles) {
-        StringBuilder sb = new StringBuilder(ClaudeStructuredResponse.buildSystemPrompt());
+        StringBuilder sb = new StringBuilder(ClaudeSystemPrompt.build());
 
         if (!sourceFiles.isEmpty()) {
             sb.append("\n\nSource files:\n");
@@ -126,7 +126,7 @@ public class ClaudeRunner {
         conversationStore.addUserMessage(userMessage);
         List<ClaudeMessage> conversationTurns = conversationStore.getTurns();
 
-        ClaudeClient.RawResponse raw = client.send(model, conversationTurns);
+        OKHttpClaudeClient.RawResponse raw = client.send(model, conversationTurns);
         if (raw == null) {
             throw new IllegalStateException("Claude client returned null response. This indicates a misconfigured or mocked client.");
         }

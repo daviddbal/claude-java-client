@@ -6,6 +6,9 @@ import java.util.Scanner;
 
 public class Main {
 
+    // Toggle CLI logging here
+    private static final boolean CLI_LOGGING_ENABLED = true;
+
     public static void main(String[] args) throws Exception {
 
         String apiKey = EnvConfig.getClaudeApiKey();
@@ -25,7 +28,7 @@ public class Main {
                 System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(4096 * 4))
         );
 
-        ClaudeClientFactory factory = config -> new ClaudeClient(
+        ClaudeClientFactory factory = config -> new OKHttpClaudeClient(
                 config.apiKey(),
                 config.maxTokens(),
                 config.systemPrompt()
@@ -63,7 +66,7 @@ public class Main {
         Scanner scanner = new Scanner(System.in);
         InputReader inputReader = new MultiLineInputReader();
 
-        ClaudeStructuredResponseWithTokens last = null; // updated to WithTokens
+        ClaudeStructuredResponseWithTokens last = null;
 
         while (true) {
             System.out.print("\nYou> ");
@@ -78,23 +81,24 @@ public class Main {
                 }
                 case "reset" -> {
                     session.resetConversation();
-                    System.out.println("[Conversation history cleared — context preserved]");
+                    if (CLI_LOGGING_ENABLED)
+                        System.out.println("[Conversation history cleared — context preserved]");
                     continue;
                 }
                 case "write" -> {
                     if (last == null) {
-                        System.out.println("[No response to write yet]");
+                        if (CLI_LOGGING_ENABLED) System.out.println("[No response to write yet]");
                     } else {
                         session.writeFiles(last);
-                        System.out.println("[Files written to ./generated/]");
+                        if (CLI_LOGGING_ENABLED) System.out.println("[Files written to ./generated/]");
                     }
                     continue;
                 }
                 case "show" -> {
                     if (last == null) {
-                        System.out.println("[No response yet]");
+                        if (CLI_LOGGING_ENABLED) System.out.println("[No response yet]");
                     } else if (!last.hasFiles()) {
-                        System.out.println("[No files in last response]");
+                        if (CLI_LOGGING_ENABLED) System.out.println("[No files in last response]");
                     } else {
                         last.files().forEach(f -> {
                             System.out.println("\n===== " + f.path() + " =====");
@@ -121,25 +125,26 @@ public class Main {
             if (input.isBlank()) continue;
 
             try {
-                System.out.println("[DEBUG] Calling session.ask()");
-                last = session.ask(input); // Now returns ClaudeStructuredResponseWithTokens
+                last = session.ask(input); // returns ClaudeStructuredResponseWithTokens
 
-                System.out.println("\nClaude> " +
-                        (last.description() != null ? last.description() : "[No description]"));
+                if (CLI_LOGGING_ENABLED) {
+                    System.out.println("\nClaude> " +
+                            (last.description() != null ? last.description() : "[No description]"));
 
-                System.out.printf(
-                        "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | %s]%n",
-                        last.inputTokens(),
-                        last.outputTokens(),
-                        last.cacheCreationTokens(),
-                        last.cacheReadTokens(),
-                        session.isCacheHitObserved() ? "CACHE HIT ✓" : "NO CACHE"
-                );
+                    System.out.printf(
+                            "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | %s]%n",
+                            last.inputTokens(),
+                            last.outputTokens(),
+                            last.cacheCreationTokens(),
+                            last.cacheReadTokens(),
+                            session.isCacheHitObserved() ? "CACHE HIT ✓" : "NO CACHE"
+                    );
 
-                if (last.hasFiles()) {
-                    System.out.println("Generated files:");
-                    last.files().forEach(f -> System.out.println("  " + f.path()));
-                    System.out.println("\nType 'write' to save these files to ./generated/");
+                    if (last.hasFiles()) {
+                        System.out.println("Generated files:");
+                        last.files().forEach(f -> System.out.println("  " + f.path()));
+                        System.out.println("\nType 'write' to save these files to ./generated/");
+                    }
                 }
 
             } catch (Exception e) {

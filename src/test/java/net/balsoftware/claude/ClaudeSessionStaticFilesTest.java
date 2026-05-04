@@ -23,7 +23,7 @@ class ClaudeSessionStaticFilesTest {
         // Build session using the spy
         session = ClaudeSession.builder()
                 .apiKey("DUMMY_KEY")
-                .clientFactory(config -> new ClaudeClient(config.apiKey(), config.maxTokens(), config.systemPrompt()))
+                .clientFactory(config -> new OKHttpClaudeClient(config.apiKey(), config.maxTokens(), config.systemPrompt()))
                 .contextFileCollector(spyContext)  // inject the spy
                 .build();
     }

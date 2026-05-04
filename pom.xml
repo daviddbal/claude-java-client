@@ -1,112 +1,125 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-    <parent>
-        <groupId>net.balsoftware</groupId>
-        <artifactId>trading-parent</artifactId>
-        <version>1.0.1-SNAPSHOT</version>
-    </parent>
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://www.mave n.apache.org/xsd/maven-4.0.0.xsd">
 
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>net.balsoftware</groupId>
     <artifactId>claude</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+
     <name>claude api client</name>
     <packaging>jar</packaging>
 
-    <dependencies>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>feature-builder</artifactId>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>net-trainer</artifactId>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>utilities</artifactId>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>trader-common-legacy</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>trading-app</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>trading-broker</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>trading-common</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>trading-domain</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>trading-infra</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.balsoftware</groupId>
-            <artifactId>websocket-rx</artifactId>
-            <version>${my.project.version}</version>
-            <scope>compile</scope>
-        </dependency>
+    <properties>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <!-- Claude client dependencies -->
+        <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
+
+        <okhttp.version>4.12.0</okhttp.version>
+        <jackson.version>2.17.1</jackson.version>
+
+        <mockito.version>5.12.0</mockito.version>
+        <junit.version>5.14.0</junit.version>
+    </properties>
+
+    <dependencies>
+
+        <!-- =========================
+             CORE CLIENT DEPENDENCIES
+             ========================= -->
+
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <version>${okhttp.version}</version>
         </dependency>
 
         <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <scope>test</scope>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
         </dependency>
+
         <dependency>
             <groupId>io.github.cdimascio</groupId>
             <artifactId>dotenv-java</artifactId>
             <version>3.0.0</version>
         </dependency>
+
+        <!-- =========================
+             TESTING (FIXED STACK)
+             ========================= -->
+
+        <!-- JUnit 5 complete (not API-only) -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Mockito core -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- REQUIRED for @ExtendWith(MockitoExtension.class) -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Byte Buddy pinned (prevents Java 25 resolution drift issues) -->
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>1.17.5</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+            <version>1.17.5</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
         <plugins>
+
+            <!-- Compiler -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                </configuration>
+            </plugin>
+
+            <!-- JUnit 5 test runner -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>${maven.surfile.plugin.version}</version>
+                <version>${maven.surefire.plugin.version}</version>
                 <configuration>
                     <useModulePath>false</useModulePath>
                 </configuration>
             </plugin>
 
-            <!-- Fat jar: bundles all dependencies into one executable jar -->
-            <!-- Fat jar: bundles all dependencies into one executable jar -->
+            <!-- Fat jar -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -114,9 +127,12 @@
                 <executions>
                     <execution>
                         <phase>package</phase>
-                        <goals><goal>shade</goal></goals>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -129,15 +145,19 @@
                                     </excludes>
                                 </filter>
                             </filters>
+
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>net.balsoftware.claude.Main</mainClass>
                                 </transformer>
                             </transformers>
+
                         </configuration>
                     </execution>
                 </executions>
             </plugin>
+
         </plugins>
     </build>
+
 </project>

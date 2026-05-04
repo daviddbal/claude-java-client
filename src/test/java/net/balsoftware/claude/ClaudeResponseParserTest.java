@@ -51,50 +51,54 @@ class ClaudeResponseParserTest {
     @Test
     void parsesEmptyFiles() throws IOException {
         String json = """
-            {
-              "type": "explanation",
-              "description": "Nothing",
-              "content": "Nothing to explain",
-              "files": []
-            }
-            """;
+        {
+          "type": "explanation",
+          "description": "Nothing",
+          "files": []
+        }
+        """;
 
         ClaudeStructuredResponse r = parser.parseStructured(json);
         assertTrue(r.files().isEmpty());
         assertEquals("Nothing", r.description());
-        assertEquals("Nothing to explain", r.content());
+
+        // There are no files, so content() returns null
+        assertNull(r.content());
     }
 
     @Test
-    void missingDescriptionDefaultsToEmpty() throws IOException {
+    void missingDescriptionAndFilesThrows() {
         String json = """
-                {
-                  "type": "explanation",
-                  "files": []
-                }
-                """;
+        {
+          "type": "explanation",
+          "files": []
+        }
+        """;
 
-        ClaudeStructuredResponse r = parser.parseStructured(json);
-        assertEquals("", r.description() == null ? "" : r.description());
-        assertTrue(r.files().isEmpty());
+        // Expect an exception because explanation has no content
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
+            parser.parseStructured(json);
+        });
     }
 
     @Test
     void parsesCodeWithExplanation() throws IOException {
         String json = """
-                {
-                  "type": "code_with_explanation",
-                  "description": "Example with explanation",
-                  "explanation": "This explains the code",
-                  "files": [
-                    { "path": "Example.java", "content": "class Example {}" }
-                  ]
-                }
-                """;
+            {
+              "type": "code_with_explanation",
+              "description": "Example with explanation",
+              "files": [
+                { "path": "Example.java", "content": "class Example {}" }
+              ]
+            }
+            """;
 
         ClaudeStructuredResponse r = parser.parseStructured(json);
+
         assertEquals("Example with explanation", r.description());
-        assertEquals("This explains the code", r.explanation());
+
         assertEquals(1, r.files().size());
+        assertEquals("Example.java", r.files().get(0).path());
+        assertEquals("class Example {}", r.files().get(0).content());
     }
 }

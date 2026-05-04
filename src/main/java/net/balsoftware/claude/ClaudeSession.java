@@ -7,14 +7,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * High-level entry point for the Claude coding assistant,
- * with prompt and response caching to save tokens/money.
+ * File-centric ClaudeSession:
+ * - files are the only real output artifact
+ * - description is optional metadata
+ * - no payload/content/explanation fields
  */
 public class ClaudeSession {
 
     private final GeneratedFileWriter fileWriter;
     private final Path outputRoot;
     private final String model;
+
     private final ConversationStore conversationStore;
     private final ClaudeClientFactory clientFactory;
     private final SourceFileCollector sourceFileCollector;
@@ -25,35 +28,37 @@ public class ClaudeSession {
     private final int maxTokens;
 
     private List<Class<?>> loadedContextClasses = null;
-    private String cachedSystemPrompt = "";
     private ClaudeRunner runner;
 
-    // Token tracking
-    private int totalInputTokens         = 0;
-    private int totalOutputTokens        = 0;
-    private int totalCacheCreationTokens = 0;
-    private int totalCacheReadTokens     = 0;
-    private boolean cacheHitObserved     = false;
+    // ---------------- TOKEN TRACKING ----------------
 
-    // Prompt cache keyed by context hash
+    private int totalInputTokens = 0;
+    private int totalOutputTokens = 0;
+    private int totalCacheCreationTokens = 0;
+    private int totalCacheReadTokens = 0;
+    private boolean cacheHitObserved = false;
+
+    // ---------------- CACHE ----------------
+
     private final Map<Integer, String> promptCache = new ConcurrentHashMap<>();
+    private final Map<Integer, ClaudeStructuredResponseWithTokens> responseCache = new ConcurrentHashMap<>();
     private int lastStaticFilesHash = 0;
 
-    // Response cache keyed by (static files hash + user message)
-    private final Map<Integer, ClaudeStructuredResponseWithTokens> responseCache = new ConcurrentHashMap<>();
+    // ---------------- CONSTRUCTOR ----------------
 
     private ClaudeSession(Builder builder) {
         this.apiKey = builder.apiKey;
         this.maxTokens = builder.maxTokens;
+        this.outputRoot = builder.outputRoot;
+        this.model = builder.model;
+
+        this.fileWriter = new GeneratedFileWriter();
+        this.conversationStore = new ConversationStore();
+        this.responseParser = new ClaudeResponseParser();
 
         SourceRootConfig sourceRootConfig = new SourceRootConfig(builder.sourceRoots);
 
-        this.fileWriter        = new GeneratedFileWriter();
-        this.outputRoot        = builder.outputRoot;
-        this.model             = builder.model;
-        this.conversationStore = new ConversationStore();
-
-        this.sourceFileCollector  = builder.sourceFileCollector != null
+        this.sourceFileCollector = builder.sourceFileCollector != null
                 ? builder.sourceFileCollector
                 : new SourceFileCollector(sourceRootConfig);
 
@@ -61,16 +66,15 @@ public class ClaudeSession {
                 ? builder.contextFileCollector
                 : new ContextFileCollector(builder.contextFilesRoot);
 
-        this.responseParser = new ClaudeResponseParser();
-
         this.clientFactory = builder.clientFactory != null
                 ? builder.clientFactory
-                : cfg -> new ClaudeClient(cfg.apiKey(), cfg.maxTokens(), "");
+                : cfg -> new OKHttpClaudeClient(cfg.apiKey(), cfg.maxTokens(), "");
     }
 
-    // ------------------------------------------------------------------ context
+    // ---------------- CONTEXT ----------------
 
     public void loadContext(List<Class<?>> dynamicContextClasses) throws IOException {
+
         List<SourceFile> staticContextFiles = contextFileCollector.collect();
         List<SourceFile> dynamicSourceFiles = sourceFileCollector.collect(dynamicContextClasses);
 
@@ -85,17 +89,14 @@ public class ClaudeSession {
         loadedContextClasses = dynamicContextClasses;
         lastStaticFilesHash = contextHash;
 
-        // Prompt cache
-        cachedSystemPrompt = promptCache.get(contextHash);
+        String cachedSystemPrompt = promptCache.get(contextHash);
+
         if (cachedSystemPrompt == null) {
-            StringBuilder sb = new StringBuilder(ClaudeStructuredResponse.buildSystemPrompt());
-            appendFilesToPrompt(sb, "source files", dynamicSourceFiles);
-            appendFilesToPrompt(sb, "additional context files", staticContextFiles);
-            cachedSystemPrompt = sb.toString();
+            cachedSystemPrompt = buildSystemPrompt(dynamicSourceFiles, staticContextFiles);
             promptCache.put(contextHash, cachedSystemPrompt);
         }
 
-        ClaudeClientConfig configWithPrompt = new ClaudeClientConfig(
+        ClaudeClientConfig config = new ClaudeClientConfig(
                 apiKey,
                 maxTokens,
                 true,
@@ -108,61 +109,94 @@ public class ClaudeSession {
                 contextFileCollector,
                 conversationStore,
                 responseParser,
-                configWithPrompt,
+                config,
                 dynamicContextClasses
         );
     }
 
-    private void appendFilesToPrompt(StringBuilder sb, String title, List<SourceFile> files) {
-        if (!files.isEmpty()) {
-            sb.append("\n\nYou have the following ").append(title).append(":\n");
-            for (SourceFile f : files) {
-                sb.append("\n--- FILE: ").append(f.path()).append(" ---\n");
+    // ---------------- SYSTEM PROMPT (INLINE) ----------------
+
+    private String buildSystemPrompt(List<SourceFile> sourceFiles,
+                                     List<SourceFile> contextFiles) {
+
+        StringBuilder sb = new StringBuilder();
+
+        sb.append(ClaudeSystemPrompt.build());
+
+        if (!sourceFiles.isEmpty()) {
+            sb.append("\n\nSOURCE FILES:\n");
+            for (SourceFile f : sourceFiles) {
+                sb.append("\n--- ").append(f.path()).append(" ---\n");
                 sb.append(f.content()).append("\n");
             }
         }
-    }
 
-    // ---------------- messaging ----------------
-
-    private int computeCacheKey(String userMessage) {
-        return Objects.hash(lastStaticFilesHash, userMessage);
-    }
-
-    public ClaudeStructuredResponseWithTokens ask(String message) throws IOException {
-        if (runner == null)
-            throw new IllegalStateException("loadContext() must be called first.");
-
-        int key = computeCacheKey(message);
-
-        // Try reading from cache first
-        ClaudeStructuredResponseWithTokens cached = responseCache.get(key);
-        if (cached != null) {
-            totalCacheReadTokens += cached.inputTokens() + cached.outputTokens();
-            cacheHitObserved = true;
-            return cached;
+        if (!contextFiles.isEmpty()) {
+            sb.append("\n\nCONTEXT FILES:\n");
+            for (SourceFile f : contextFiles) {
+                sb.append("\n--- ").append(f.path()).append(" ---\n");
+                sb.append(f.content()).append("\n");
+            }
         }
 
-        // Not cached, send to Claude
-        ClaudeStructuredResponseWithTokens response = runner.runStructured(model, message);
+        return sb.toString();
+    }
 
-        // Save the response in cache
-        responseCache.put(key, response);
+    // ---------------- ASK ----------------
 
-        // Track tokens normally
-        totalInputTokens         += response.inputTokens();
-        totalOutputTokens        += response.outputTokens();
-        totalCacheCreationTokens += response.inputTokens() + response.outputTokens();
+    public ClaudeStructuredResponseWithTokens ask(String message) throws IOException {
+        if (runner == null) {
+            throw new IllegalStateException("loadContext() must be called first.");
+        }
+
+        int key = Objects.hash(lastStaticFilesHash, message);
+
+        ClaudeStructuredResponseWithTokens cached = responseCache.get(key);
+        ClaudeStructuredResponseWithTokens response;
+
+        if (cached != null) {
+            // Return a "cache hit" view of the response
+            response = new ClaudeStructuredResponseWithTokens(
+                    cached.structured(),
+                    cached.inputTokens(),
+                    cached.outputTokens(),
+                    0,                      // cacheCreationTokens
+                    cached.inputTokens()    // cacheReadTokens
+            );
+            totalCacheReadTokens += response.cacheReadTokens();
+            cacheHitObserved = true;
+        } else {
+            conversationStore.addUserMessage(message);
+
+            response = runner.runStructured(model, message);
+
+            responseCache.put(key, response);
+
+            // token accounting
+            totalInputTokens += response.inputTokens();
+            totalOutputTokens += response.outputTokens();
+            totalCacheCreationTokens += response.cacheCreationTokens();
+        }
+
+        // ---------------- LOGGING ----------------
+        ClaudeLogger.logResponse(model, message, new OKHttpClaudeClient.RawResponse(
+                response.structured().description() != null ? response.structured().description() : "[No description]",
+                response.inputTokens(),
+                response.outputTokens(),
+                response.cacheCreationTokens(),
+                response.cacheReadTokens()
+        ));
 
         return response;
     }
 
-    public ClaudeStructuredResponseWithTokens ask(String message, List<Class<?>> contextClasses) throws IOException {
+    public ClaudeStructuredResponseWithTokens ask(String message,
+                                                  List<Class<?>> contextClasses) throws IOException {
         loadContext(contextClasses);
         return ask(message);
     }
 
-    // ---------------- file writing ----------------
+    // ---------------- FILE OUTPUT ----------------
 
     public void writeFiles(ClaudeStructuredResponseWithTokens response) throws IOException {
         fileWriter.writeAll(outputRoot, response);
@@ -174,54 +208,70 @@ public class ClaudeSession {
         return response;
     }
 
-    // ---------------- history & tokens ----------------
-
-    public void resetConversation() { conversationStore.clearTurns(); }
+    // ---------------- RESET ----------------
 
     public void resetAll() {
         conversationStore.clearAll();
         loadedContextClasses = null;
         runner = null;
-        cachedSystemPrompt = "";
-        lastStaticFilesHash = 0;
+
         promptCache.clear();
         responseCache.clear();
-        totalInputTokens = totalOutputTokens = totalCacheCreationTokens = totalCacheReadTokens = 0;
+
+        lastStaticFilesHash = 0;
+
+        totalInputTokens = 0;
+        totalOutputTokens = 0;
+        totalCacheCreationTokens = 0;
+        totalCacheReadTokens = 0;
         cacheHitObserved = false;
     }
 
     public int getTurnCount() { return conversationStore.getTurnCount(); }
     public boolean isCacheHitObserved() { return cacheHitObserved; }
 
+    public void resetConversation() {
+        conversationStore.clearTurns();
+    }
+
+    // ---------------- METRICS ----------------
+
     public String getCacheStatus() {
-        if (totalCacheCreationTokens > 0 && totalCacheReadTokens == 0) return "CACHE MISS";
         if (totalCacheReadTokens > 0) return "CACHE HIT ✓";
+        if (totalCacheCreationTokens > 0) return "CACHE MISS";
         return "NO CACHE";
     }
 
     public String tokenSummary() {
         int totalIn = totalInputTokens + totalCacheCreationTokens + totalCacheReadTokens;
-        String savingsPct = totalIn > 0
+
+        String savings = totalIn > 0
                 ? String.format("%.0f%%", (totalCacheReadTokens * 100.0) / totalIn)
                 : "n/a";
+
         return String.format(
-                "Total tokens — in: %d, out: %d | cache write: %d, cache read: %d (saved ~%s) [%s]",
-                totalInputTokens, totalOutputTokens,
-                totalCacheCreationTokens, totalCacheReadTokens,
-                savingsPct, getCacheStatus());
+                "tokens in: %d out: %d | cache write: %d read: %d (saved ~%s) [%s]",
+                totalInputTokens,
+                totalOutputTokens,
+                totalCacheCreationTokens,
+                totalCacheReadTokens,
+                savings,
+                getCacheStatus()
+        );
     }
 
-    // ---------------- builder ----------------
+    // ---------------- BUILDER ----------------
 
     public static Builder builder() { return new Builder(); }
 
-    public static final class Builder {
+    public static class Builder {
         private String apiKey;
-        private String model              = ClaudeModel.defaultModel().id();
-        private List<Path> sourceRoots    = List.of(Path.of("src/main/java"));
-        private Path outputRoot           = Path.of("generated");
-        private Path contextFilesRoot     = Path.of("context-files");
-        private int maxTokens             = 4096*2;
+        private String model = ClaudeModel.defaultModel().id();
+        private List<Path> sourceRoots = List.of(Path.of("src/main/java"));
+        private Path outputRoot = Path.of("generated");
+        private Path contextFilesRoot = Path.of("context-files");
+        private int maxTokens = 8192;
+
         private ClaudeClientFactory clientFactory;
         private SourceFileCollector sourceFileCollector;
         private ContextFileCollector contextFileCollector;
@@ -230,34 +280,36 @@ public class ClaudeSession {
         public Builder model(String model) { this.model = model; return this; }
         public Builder sourceRoots(List<Path> roots) { this.sourceRoots = roots; return this; }
         public Builder outputRoot(Path outputRoot) { this.outputRoot = outputRoot; return this; }
-        public Builder contextFilesRoot(Path contextFilesRoot) { this.contextFilesRoot = contextFilesRoot; return this; }
+        public Builder contextFilesRoot(Path root) { this.contextFilesRoot = root; return this; }
         public Builder maxTokens(int maxTokens) { this.maxTokens = maxTokens; return this; }
-        public Builder clientFactory(ClaudeClientFactory factory) { this.clientFactory = factory; return this; }
-        public Builder sourceFileCollector(SourceFileCollector collector) { this.sourceFileCollector = collector; return this; }
-        public Builder contextFileCollector(ContextFileCollector collector) { this.contextFileCollector = collector; return this; }
+
+        public Builder clientFactory(ClaudeClientFactory f) { this.clientFactory = f; return this; }
+        public Builder sourceFileCollector(SourceFileCollector c) { this.sourceFileCollector = c; return this; }
+        public Builder contextFileCollector(ContextFileCollector c) { this.contextFileCollector = c; return this; }
 
         public ClaudeSession build() {
-            if (apiKey == null || apiKey.isBlank())
+            if (apiKey == null || apiKey.isBlank()) {
                 throw new IllegalStateException("apiKey must be set");
+            }
             return new ClaudeSession(this);
         }
     }
 
-    // ---------------- context inspection ----------------
+    // ---------------- CONTEXT INSPECTION ----------------
 
     public List<String> getLoadedContextFiles() {
         if (runner == null) return List.of();
 
-        List<String> sourceFiles = runner.getLastSourceFiles().stream()
-                .map(sf -> sf.path().toString())
+        List<String> source = runner.getLastSourceFiles().stream()
+                .map(f -> f.path().toString())
                 .collect(Collectors.toList());
 
-        List<String> contextFiles = runner.getLastContextFiles().stream()
-                .map(sf -> sf.path().toString())
+        List<String> context = runner.getLastContextFiles().stream()
+                .map(f -> f.path().toString())
                 .collect(Collectors.toList());
 
-        sourceFiles.addAll(contextFiles);
-        return sourceFiles;
+        source.addAll(context);
+        return source;
     }
 
     ClaudeRunner getRunner() { return runner; }

@@ -15,7 +15,7 @@ import static org.mockito.Mockito.*;
 class ClaudeRunnerTest {
 
     private ClaudeClientFactory mockFactory;
-    private ClaudeClient mockClient;
+    private OKHttpClaudeClient mockClient;
     private SourceFileCollector mockCollector;
     private ContextFileCollector mockContextCollector;
     private ConversationStore store;
@@ -26,7 +26,7 @@ class ClaudeRunnerTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        mockClient           = mock(ClaudeClient.class);
+        mockClient           = mock(OKHttpClaudeClient.class);
         mockCollector        = mock(SourceFileCollector.class);
         mockContextCollector = mock(ContextFileCollector.class);
         store                = new ConversationStore();
@@ -52,8 +52,8 @@ class ClaudeRunnerTest {
 
     // ------------------------------------------------------------------ helpers
 
-    private static ClaudeClient.RawResponse rawResponse(String text, int inputTokens, int outputTokens) {
-        return new ClaudeClient.RawResponse(text, inputTokens, outputTokens, 0, 0);
+    private static OKHttpClaudeClient.RawResponse rawResponse(String text, int inputTokens, int outputTokens) {
+        return new OKHttpClaudeClient.RawResponse(text, inputTokens, outputTokens, 0, 0);
     }
 
     // ------------------------------------------------------------------ tests
@@ -106,7 +106,7 @@ class ClaudeRunnerTest {
     void cacheTokensArePassedThrough() throws IOException {
         String json = "{ \"description\": \"ok\", \"files\": [] }";
         when(mockClient.send(anyString(), anyList()))
-                .thenReturn(new ClaudeClient.RawResponse(json, 50, 20, 980, 0));
+                .thenReturn(new OKHttpClaudeClient.RawResponse(json, 50, 20, 980, 0));
 
         runner.setContext(List.of(String.class));
         ClaudeStructuredResponseWithTokens r = runner.runStructured(ClaudeModel.defaultModel().id(), "First call — cache written");
@@ -115,7 +115,7 @@ class ClaudeRunnerTest {
         assertEquals(0, r.cacheReadTokens());
 
         when(mockClient.send(anyString(), anyList()))
-                .thenReturn(new ClaudeClient.RawResponse(json, 50, 20, 0, 980));
+                .thenReturn(new OKHttpClaudeClient.RawResponse(json, 50, 20, 0, 980));
 
         ClaudeStructuredResponseWithTokens r2 = runner.runStructured(ClaudeModel.defaultModel().id(), "Second call — cache hit");
 
@@ -196,7 +196,8 @@ class ClaudeRunnerTest {
     @Test
     void runWorksAfterContextSet() throws IOException {
         runner.setContext(List.of(String.class));
-        when(mockClient.send(anyString(), anyList())).thenReturn(rawResponse("{}", 0, 0));
+        when(mockClient.send(anyString(), anyList()))
+                .thenReturn(rawResponse("{\"description\": \"test explanation\"}", 0, 0));
 
         ClaudeStructuredResponseWithTokens response = runner.runStructured(ClaudeModel.defaultModel().id(), "Hello");
         assertNotNull(response);
