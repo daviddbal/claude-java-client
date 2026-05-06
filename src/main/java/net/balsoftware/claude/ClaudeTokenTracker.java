@@ -27,6 +27,17 @@ public class ClaudeTokenTracker {
     }
 
     /**
+     * Restores token state from a snapshot.
+     */
+    public void restoreFromSnapshot(int inputTokens, int outputTokens, int cacheCreationTokens, int cacheReadTokens) {
+        this.totalInputTokens = inputTokens;
+        this.totalOutputTokens = outputTokens;
+        this.totalCacheCreationTokens = cacheCreationTokens;
+        this.totalCacheReadTokens = cacheReadTokens;
+        this.cacheHitObserved = cacheReadTokens > 0;
+    }
+
+    /**
      * Returns true if a cache hit has been observed in this session.
      */
     public boolean isCacheHitObserved() {

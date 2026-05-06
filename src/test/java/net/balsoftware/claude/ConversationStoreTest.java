@@ -1,18 +1,26 @@
 package net.balsoftware.claude;
 
 import org.junit.jupiter.api.Test;
-
 import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConversationStoreTest {
+
+    // Helper to create a complete turn for testing
+    private ClaudeTurn createDummyTurn(String user, String assistant) {
+        return new ClaudeTurn(
+                user,
+                assistant,
+                new ClaudeStructuredResponse(ClaudeStructuredResponse.Type.explanation, assistant, List.of()),
+                1, 1, 0, 0
+        );
+    }
 
     @Test
     void systemPromptAppearsFirst() {
         ConversationStore store = new ConversationStore();
         store.setSystemPrompt("Be helpful");
-        store.addUserMessage("Hello");
+        store.addTurn(createDummyTurn("Hello", "Hi"));
 
         List<ClaudeMessage> msgs = store.getMessages();
         assertEquals(ClaudeRole.SYSTEM, msgs.get(0).role());
@@ -23,7 +31,7 @@ class ConversationStoreTest {
     void clearTurnsPreservesSystemPrompt() {
         ConversationStore store = new ConversationStore();
         store.setSystemPrompt("system");
-        store.addUserMessage("hello");
+        store.addTurn(createDummyTurn("hello", "hi"));
         store.clearTurns();
 
         List<ClaudeMessage> msgs = store.getMessages();
@@ -35,7 +43,7 @@ class ConversationStoreTest {
     void clearAllRemovesEverything() {
         ConversationStore store = new ConversationStore();
         store.setSystemPrompt("system");
-        store.addUserMessage("hello");
+        store.addTurn(createDummyTurn("hello", "hi"));
         store.clearAll();
         assertTrue(store.getMessages().isEmpty());
     }
@@ -43,23 +51,24 @@ class ConversationStoreTest {
     @Test
     void slidingWindowDropsOldestTurns() {
         ConversationStore store = new ConversationStore();
-        // Add 11 user+assistant pairs (> MAX_TURN_PAIRS=10)
+        // MAX_TURNS is 10. Add 11 turns to trigger the trim logic.
         for (int i = 0; i < 11; i++) {
-            store.addUserMessage("user " + i);
-            store.addAssistantMessage("assistant " + i);
+            store.addTurn(createDummyTurn("user " + i, "assistant " + i));
         }
-        // Should have been trimmed to 10 pairs = 20 turn messages
-        assertEquals(20, store.getTurnCount());
-        // Oldest message should now be "user 1", not "user 0"
+
+        // 11 turns added, 1 dropped = 10 turns remaining.
+        assertEquals(10, store.getTurnCount());
+
+        // Oldest turn (0) was dropped, so oldest remaining is "user 1".
         List<ClaudeMessage> msgs = store.getMessages();
-        ClaudeMessage first = msgs.get(0); // no system prompt set
-        assertEquals("user 1", first.content());
+        // No system prompt, so get(0) is the user message from Turn 1.
+        assertEquals("user 1", msgs.get(0).content());
     }
 
     @Test
     void getMessagesIsUnmodifiable() {
         ConversationStore store = new ConversationStore();
-        store.addUserMessage("hi");
+        store.addTurn(createDummyTurn("hi", "bye"));
         assertThrows(UnsupportedOperationException.class,
                 () -> store.getMessages().add(new ClaudeMessage(ClaudeRole.USER, "extra")));
     }

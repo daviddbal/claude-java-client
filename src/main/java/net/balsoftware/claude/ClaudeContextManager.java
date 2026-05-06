@@ -168,6 +168,13 @@ public class ClaudeContextManager {
         return combined;
     }
 
+    /**
+     * Returns the currently loaded dynamic context classes.
+     */
+    public List<Class<?>> getLoadedContextClasses() {
+        return this.loadedContextClasses != null ? this.loadedContextClasses : List.of();
+    }
+
     public void reset() {
         loadedContextClasses = null;
         runner = null;

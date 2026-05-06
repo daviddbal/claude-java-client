@@ -181,11 +181,27 @@ class ClaudeRunnerCachingTest {
 
     @Test
     void conversationStoreRemainsUntouchedOnContextReload() throws IOException {
+        // Create a dummy response to support the turn structure
+        ClaudeStructuredResponse dummyResponse = new ClaudeStructuredResponse(
+                ClaudeStructuredResponse.Type.explanation,
+                "Hi there",
+                List.of()
+        );
 
-        store.addUserMessage("Hello");
+        // Construct the atomic turn object
+        ClaudeTurn turn = new ClaudeTurn(
+                "Hello",
+                "Hi there",
+                dummyResponse,
+                1, 1, 0, 0
+        );
+
+        // Use the new atomic addTurn method
+        store.addTurn(turn);
 
         runner.setContext(List.of(String.class));
 
+        // Turn count remains 1, confirming state was preserved
         assertEquals(1, store.getTurnCount());
     }
 

@@ -78,14 +78,29 @@ public class ClaudeResponseParser {
         return result.trim();
     }
 
-    // Extracts the first {...} block.
+    // Improved JSON extraction: finds the first balanced JSON object
     private String extractJson(String text) {
         int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        if (start == -1 || end == -1 || start >= end) return null;
+        if (start == -1) return null;
+
+        // Find the balanced closing brace
+        int end = findMatchingClosingBrace(text, start);
+        if (end == -1) return null;
+
         return text.substring(start, end + 1).trim();
     }
 
+    private int findMatchingClosingBrace(String text, int start) {
+        int count = 0;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') count++;
+            else if (c == '}') count--;
+
+            if (count == 0) return i;
+        }
+        return -1;
+    }
     // Robust unescaping: only triggers if standard parsing fails.
     private String robustUnescape(String s) {
         String candidate = s.trim();

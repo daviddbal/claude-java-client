@@ -25,6 +25,9 @@ public class ClaudeSession {
 
     // Response cache: key = hash(contextHash, message), value = cached response
     private final Map<Integer, ClaudeStructuredResponseWithTokens> responseCache = new HashMap<>();
+    
+    // Track last response
+    private ClaudeStructuredResponseWithTokens lastResponse;
 
     // -------- CONSTRUCTOR --------
 
@@ -35,6 +38,7 @@ public class ClaudeSession {
         this.conversationStore = new ConversationStore();
         this.responseParser = new ClaudeResponseParser();
         this.tokenTracker = new ClaudeTokenTracker();
+        this.lastResponse = null;
 
         SourceRootConfig sourceRootConfig = new SourceRootConfig(builder.sourceRoots);
 
@@ -98,12 +102,25 @@ public class ClaudeSession {
             tokenTracker.accumulate(response);
         } else {
             // Execute and cache
-            conversationStore.addUserMessage(message);
             response = contextManager.getExecutor().execute(model, message);
             responseCache.put(cacheKey, response);
             tokenTracker.accumulate(response);
-            conversationStore.addAssistantMessage(buildHistorySummary(response.structured()));
+            
+            // Create and store turn (ONLY ONCE)
+            ClaudeTurn turn = new ClaudeTurn(
+                    message,
+                    buildHistorySummary(response.structured()),
+                    response.structured(),
+                    response.inputTokens(),
+                    response.outputTokens(),
+                    response.cacheCreationTokens(),
+                    response.cacheReadTokens()
+            );
+            conversationStore.addTurn(turn);
         }
+
+        // Store as last response
+        this.lastResponse = response;
 
         // Log the response
         ClaudeLogger.logResponse(model, message, new OKHttpClaudeClient.RawResponse(
@@ -169,6 +186,7 @@ public class ClaudeSession {
         contextManager.reset();
         responseCache.clear();
         tokenTracker.reset();
+        lastResponse = null;
     }
 
     /**
@@ -181,10 +199,10 @@ public class ClaudeSession {
     // -------- METRICS / DIAGNOSTICS --------
 
     /**
-     * Returns the number of conversation turns.
+     * Returns the number of turns.
      */
     public int getTurnCount() {
-        return conversationStore.getTurnCount();
+        return conversationStore.getTurns().size();
     }
 
     /**
@@ -213,6 +231,45 @@ public class ClaudeSession {
      */
     public List<String> getLoadedContextFiles() {
         return contextManager.getLoadedContextFiles();
+    }
+
+    /**
+     * Returns the conversation history as a list of user messages only.
+     */
+    public List<String> getConversationHistory() {
+        return conversationStore.getTurns().stream()
+                .map(ClaudeTurn::getUserMessage)
+                .toList();
+    }
+
+    // -------- PERSISTENCE HELPERS (REQUIRED BY SessionPersistence) --------
+
+    public List<SerializableTurn> getConversationTurns() {
+        return conversationStore.getTurns().stream()
+                .map(t -> new SerializableTurn(t.getUserMessage(), t.getAssistantMessage()))
+                .toList();
+    }
+
+    public List<String> getLoadedContextClassNames() {
+        return contextManager.getLoadedContextClasses().stream()
+                .map(Class::getName)
+                .toList();
+    }
+
+    public String getSystemPrompt() {
+        return contextManager.getRunner().getCachedSystemPrompt();
+    }
+
+    public int getTotalInputTokens() { return tokenTracker.getTotalInputTokens(); }
+    public int getTotalOutputTokens() { return tokenTracker.getTotalOutputTokens(); }
+    public int getTotalCacheCreationTokens() { return tokenTracker.getTotalCacheCreationTokens(); }
+    public int getTotalCacheReadTokens() { return tokenTracker.getTotalCacheReadTokens(); }
+
+    /**
+     * Returns the last response received from Claude.
+     */
+    public ClaudeStructuredResponseWithTokens getLastResponse() {
+        return lastResponse;
     }
 
     // -------- BUILDER --------

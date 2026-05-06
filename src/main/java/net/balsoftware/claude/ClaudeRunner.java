@@ -3,7 +3,6 @@ package net.balsoftware.claude;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class ClaudeRunner {
 
@@ -22,7 +21,7 @@ public class ClaudeRunner {
     private List<SourceFile> lastSourceFiles = List.of();
     private List<SourceFile> lastContextFiles = List.of();
 
-    // ---------------- Constructors ----------------
+    // ~~~~~~~~~~~~~~~~ Constructors ~~~~~~~~~~~~~~~~
 
     public ClaudeRunner(
             ClaudeClientFactory clientFactory,
@@ -47,7 +46,7 @@ public class ClaudeRunner {
         }
     }
 
-    // ---------------- Context ----------------
+    // ~~~~~~~~~~~~~~~~ Context ~~~~~~~~~~~~~~~~
 
     public void setContext(List<Class<?>> contextClasses) throws IOException {
         List<SourceFile> contextFiles = contextFileCollector.collect();
@@ -111,11 +110,11 @@ public class ClaudeRunner {
         return sb.toString();
     }
 
-    // ---------------- Running ----------------
+    // ~~~~~~~~~~~~~~~~ Running ~~~~~~~~~~~~~~~~
 
     /**
-     * Runs a user prompt and returns the structured Claude response
-     * along with token tracking/caching information.
+     * Executes a user message and returns structured response with tokens.
+     * Does NOT modify conversation state — that's done in ClaudeSession.
      */
     public ClaudeStructuredResponseWithTokens runStructured(String model, String userMessage) throws IOException {
         if (cachedSystemPrompt.isBlank())
@@ -123,20 +122,19 @@ public class ClaudeRunner {
         if (client == null)
             throw new IllegalStateException("Claude client is not initialized. Context must be set before run().");
 
-        conversationStore.addUserMessage(userMessage);
-        List<ClaudeMessage> conversationTurns = conversationStore.getTurns();
+        // Build messages from current turns + new user message
+        List<ClaudeMessage> messages = conversationStore.toMessages();
+        messages.add(new ClaudeMessage(ClaudeRole.USER, userMessage));
 
-        OKHttpClaudeClient.RawResponse raw = client.send(model, conversationTurns);
+        OKHttpClaudeClient.RawResponse raw = client.send(model, messages);
         if (raw == null) {
             throw new IllegalStateException("Claude client returned null response. This indicates a misconfigured or mocked client.");
         }
 
-        ClaudeStructuredResponse response = responseParser.parseStructured(raw.text());
-
-        conversationStore.addAssistantMessage(buildHistorySummary(response));
+        ClaudeStructuredResponse structured = responseParser.parseStructured(raw.text());
 
         return new ClaudeStructuredResponseWithTokens(
-                response,
+                structured,
                 raw.inputTokens(),
                 raw.outputTokens(),
                 raw.cacheCreationTokens(),
@@ -144,17 +142,7 @@ public class ClaudeRunner {
         );
     }
 
-    private String buildHistorySummary(ClaudeStructuredResponse response) {
-        if (!response.hasFiles()) return response.description() != null ? response.description() : "";
-
-        String filePaths = response.files().stream()
-                .map(ClaudeStructuredResponse.FileItem::path)
-                .collect(Collectors.joining(", "));
-
-        return (response.description() != null ? response.description() : "") + " [files: " + filePaths + "]";
-    }
-
-    // ---------------- Getters for testing ----------------
+    // ~~~~~~~~~~~~~~~~ Getters ~~~~~~~~~~~~~~~~
 
     ClaudeClient getClientForTest() { return client; }
     String getCachedSystemPrompt() { return cachedSystemPrompt; }
