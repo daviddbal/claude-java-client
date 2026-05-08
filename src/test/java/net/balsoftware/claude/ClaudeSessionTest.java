@@ -1,28 +1,125 @@
 package net.balsoftware.claude;
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import java.io.IOException;
 import java.util.List;
 
-public class ClaudeSessionTest {
-    public static void main(String[] args) throws Exception {
-        ClaudeClientFactory factory = config -> new OKHttpClaudeClient(config.apiKey(), config.maxTokens(), config.systemPrompt());
-        ClaudeSession session = ClaudeSession.builder()
+import static org.junit.jupiter.api.Assertions.*;
+
+class ClaudeSessionTest {
+
+    private ClaudeSession session;
+
+    @BeforeEach
+    void setUp() {
+        ClaudeClientFactory mockFactory = config -> new OKHttpClaudeClient(
+                config.apiKey(),
+                config.maxTokens(),
+                config.systemPrompt()
+        ) {
+            private int callCount = 0;
+
+            @Override
+            public RawResponse send(String model, List<ClaudeMessage> conversation) {
+                callCount++;
+                return new RawResponse(
+                        "{\"type\":\"explanation\",\"description\":\"response #" + callCount + "\" ,\"files\":[]}",
+                        10, 5, 0, 0
+                );
+            }
+        };
+
+        session = ClaudeSession.builder()
                 .apiKey("DUMMY_KEY")
-                .clientFactory(factory)
+                .clientFactory(mockFactory)
                 .build();
 
-        // Load context (even empty)
-        session.loadContext(List.of()); // ensures system prompt is set
+        // Ensure session is pristine before each test
+        session.resetAll();
+    }
 
-        // Debug print
-        System.out.println("BASE: '" + ClaudeSystemPrompt.build() + "'");
-        System.out.println("Runner cached: '" + session.getRunner().getCachedSystemPrompt() + "'");
+    @Test
+    void testGetConversationHistory() throws IOException {
+        session.loadContext(List.of());
+        session.ask("First question");
+        session.ask("Second question");
 
-        // This cannot throw if BASE_SYSTEM_PROMPT is non-blank
-        ClaudeStructuredResponseWithTokens response = session.ask("Hello, Claude!");
+        List<String> history = session.getConversationHistory();
 
-        System.out.println("Description: " + response.description());
-        System.out.println("System prompt cached: " +
-                ((session.getRunner() != null) && !session.getRunner().getCachedSystemPrompt().isBlank()));
-        System.out.println("Token summary: " + session.tokenSummary());
+        assertEquals(2, history.size(),
+                "Conversation history should contain user messages from each turn");
+        assertTrue(history.contains("First question"));
+        assertTrue(history.contains("Second question"));
+        assertEquals("First question", history.get(0));
+        assertEquals("Second question", history.get(1));
+    }
+
+    @Test
+    void testGetLastResponse() throws IOException {
+        session.loadContext(List.of());
+        ClaudeStructuredResponseWithTokens response1 = session.ask("Test 1");
+        ClaudeStructuredResponseWithTokens response2 = session.ask("Test 2");
+
+        ClaudeStructuredResponseWithTokens lastResponse = session.getLastResponse();
+        assertNotNull(lastResponse, "Last response should be cached");
+        assertEquals(response2, lastResponse, "Last response should match the most recent ask() call");
+        assertEquals(response2.structured(), lastResponse.structured(),
+                "Last response structured content should match most recent");
+    }
+
+    @Test
+    void testGetTurnCount() throws IOException {
+        session.loadContext(List.of());
+        assertEquals(0, session.getTurnCount(), "Fresh session has zero turns");
+
+        session.ask("First");
+        assertEquals(1, session.getTurnCount(), "One ask creates one turn");
+
+        session.ask("Second");
+        assertEquals(2, session.getTurnCount(), "Second ask creates second turn");
+    }
+
+    @Test
+    void testResetConversationClearsTurns() throws IOException {
+        session.loadContext(List.of());
+        session.ask("First");
+        session.ask("Second");
+        assertEquals(2, session.getTurnCount());
+
+        session.resetConversation();
+        assertEquals(0, session.getTurnCount(), "resetConversation should clear turns");
+        assertEquals(0, session.getConversationHistory().size());
+    }
+
+    @Test
+    void testResetAllClearsEverything() throws IOException {
+        session.loadContext(List.of(String.class));
+        session.ask("First");
+        assertEquals(1, session.getTurnCount());
+        assertTrue(session.getTotalInputTokens() > 0);
+
+        session.resetAll();
+        assertEquals(0, session.getTurnCount());
+        assertEquals(0, session.getTotalInputTokens());
+        assertEquals(0, session.getTotalOutputTokens());
+        assertNull(session.getLastResponse());
+    }
+
+    @Test
+    void testAskFailsWithoutLoadContext() {
+        assertThrows(IllegalStateException.class, () -> session.ask("No context"),
+                "ask() should fail without loadContext()");
+    }
+
+    @Test
+    void testCacheHitBehavior() throws IOException {
+        session.loadContext(List.of());
+        ClaudeStructuredResponseWithTokens first = session.ask("Same question");
+        assertTrue(session.isCacheHitObserved() == false);
+
+        ClaudeStructuredResponseWithTokens cached = session.ask("Same question");
+        assertTrue(session.isCacheHitObserved() == true,
+                "Repeated identical question should trigger cache hit");
     }
 }
