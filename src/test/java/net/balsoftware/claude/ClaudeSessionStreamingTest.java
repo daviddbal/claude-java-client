@@ -41,6 +41,34 @@ class ClaudeSessionStreamingTest {
     }
 
     @Test
+    void askStreamingProseStreamsDecodedDescription() throws IOException {
+        // The structured JSON streams in two chunks; the description contains a \n escape.
+        String part1 = "{\"type\":\"explanation\",\"description\":\"Hel";
+        String part2 = "lo,\\nworld\",\"files\":[]}";
+
+        ClaudeClientFactory factory = config ->
+                new OKHttpClaudeClient(config.apiKey(), config.maxTokens(), config.systemPrompt()) {
+                    @Override
+                    public RawResponse sendStreaming(String model, List<ClaudeMessage> messages,
+                                                     java.util.function.Consumer<String> onTextDelta) {
+                        onTextDelta.accept(part1);
+                        onTextDelta.accept(part2);
+                        return new RawResponse(part1 + part2, 10, 5, 0, 0);
+                    }
+                };
+
+        ClaudeSession session = ClaudeSession.builder().apiKey("k").clientFactory(factory).build();
+        session.loadContext(List.of());
+
+        StringBuilder prose = new StringBuilder();
+        ClaudeStructuredResponseWithTokens resp = session.askStreamingProse("hi", prose::append);
+
+        // The callback sees decoded prose (no JSON syntax), matching the parsed description.
+        assertEquals("Hello,\nworld", prose.toString());
+        assertEquals("Hello,\nworld", resp.structured().description());
+    }
+
+    @Test
     void askStreamingFallsBackForNonStreamingClient() throws IOException {
         // A plain ClaudeClient implementing only send(): the interface's default sendStreaming
         // emits the whole text once.

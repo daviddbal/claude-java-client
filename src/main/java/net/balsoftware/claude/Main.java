@@ -186,12 +186,11 @@ public class Main {
 
             try {
                 if (streaming) {
-                    // Stream raw text (the structured JSON) as it is generated, then fall
-                    // through to print the parsed summary below.
-                    System.out.print("\nClaude (streaming)> ");
+                    // Stream the readable description prose as it is generated.
+                    System.out.print("\nClaude> ");
                     System.out.flush();
-                    last = session.askStreaming(input, delta -> {
-                        System.out.print(delta);
+                    last = session.askStreamingProse(input, p -> {
+                        System.out.print(p);
                         System.out.flush();
                     });
                     System.out.println();
@@ -200,8 +199,11 @@ public class Main {
                 }
 
                 if (CLI_LOGGING_ENABLED) {
-                    System.out.println("\nClaude> " +
-                            (last.description() != null ? last.description() : "[No description]"));
+                    if (!streaming) {
+                        // Non-streaming: print the description now (streaming already printed it live).
+                        System.out.println("\nClaude> " +
+                                (last.description() != null ? last.description() : "[No description]"));
+                    }
 
                     System.out.printf(
                             "[Tokens — in: %d, out: %d | cache write: %d, cache read: %d | %s]%n",

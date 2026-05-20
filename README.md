@@ -9,7 +9,7 @@ and it returns structured JSON with file contents you can write to disk. Convers
 
 - **Multi-turn chat** with conversation history and turn-based context.
 - **Structured responses** — Claude replies in JSON (`type`, `description`, `files[]`); generated files are written under `generated/`.
-- **Streaming** — receive text chunks as they are generated via `ClaudeSession.askStreaming`, or in the CLI with `CLAUDE_STREAM=true`.
+- **Streaming** — receive output as it is generated: raw chunks via `ClaudeSession.askStreaming`, or readable prose (the `description`, parsed incrementally out of the JSON) via `ClaudeSession.askStreamingProse`. The CLI streams prose with `CLAUDE_STREAM=true`.
 - **Session persistence** — save the current conversation (turns, context, token totals) to disk and resume it later, in the CLI (`save` / `resume` / `sessions`) or via the library (`SessionPersistence` + `ClaudeSession.restore`).
 - **Prompt caching** — the system prompt is sent with Anthropic's ephemeral cache control so repeated requests with the same context are cheaper.
 - **Token tracking** — running totals for input/output and cache read/write tokens.
@@ -48,7 +48,7 @@ java -jar target/claude-1.0.0-SNAPSHOT.jar
 mvn test
 ```
 
-The suite has **113 tests** (JUnit 5). Six are disabled by default — they hit the
+The suite has **121 tests** (JUnit 5). Six are disabled by default — they hit the
 real Claude API and are meant to be run manually with a valid key.
 
 ## Configuration
@@ -107,14 +107,17 @@ Builder options worth knowing:
 ### Streaming
 
 ```java
-// onTextDelta receives chunks of the response (the structured JSON) as it is generated.
-// The returned value is still the fully parsed structured response.
+// Readable prose: the description is parsed incrementally out of the JSON, so the
+// callback receives decoded text rather than raw JSON.
 ClaudeStructuredResponseWithTokens response =
-        session.askStreaming("Refactor MyClass", chunk -> System.out.print(chunk));
+        session.askStreamingProse("Explain MyClass", text -> System.out.print(text));
+
+// Or the low-level raw stream (chunks of the structured JSON as they arrive):
+session.askStreaming("Refactor MyClass", chunk -> System.out.print(chunk));
 ```
 
-Streaming happens on a cache miss; a cached answer returns immediately without invoking
-the callback.
+The returned value is always the fully parsed structured response. Streaming happens on a
+cache miss; a cached answer returns immediately without invoking the callback.
 
 ### Saving and resuming a session
 

@@ -122,6 +122,17 @@ public class ClaudeSession {
         return ask(message, onTextDelta);
     }
 
+    /**
+     * Asks Claude a question, streaming the human-readable {@code description} prose to
+     * {@code onProse} as it is generated (the structured JSON is parsed incrementally so the
+     * caller sees readable text rather than raw JSON). Returns the final structured response.
+     * As with {@link #askStreaming}, nothing is streamed on a cache hit.
+     */
+    public ClaudeStructuredResponseWithTokens askStreamingProse(String message, java.util.function.Consumer<String> onProse)
+            throws IOException {
+        return ask(message, new StreamingProseExtractor(onProse));
+    }
+
     private ClaudeStructuredResponseWithTokens ask(String message, java.util.function.Consumer<String> onTextDelta)
             throws IOException {
         if (contextManager.getExecutor() == null) {
