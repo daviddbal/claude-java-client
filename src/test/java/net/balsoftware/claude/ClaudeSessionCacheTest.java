@@ -85,6 +85,34 @@ class ClaudeSessionCacheTest {
         assertTrue(session.isCacheHitObserved(), "Repeated identical request should hit cache in new context");
     }
 
+    @Test
+    void responseCacheEvictsLeastRecentlyUsedBeyondCap() throws IOException {
+        session.loadContext(List.of(String.class));
+
+        // Prime "first" in the empty-history state, then confirm it is cached.
+        session.resetConversation();
+        session.ask("first");
+        session.resetConversation();
+        assertTrue(session.ask("first").isCacheHit(), "should be cached immediately after priming");
+
+        // Flood the cache with far more than the cap (100) of other distinct entries, all in
+        // the empty-history state so "first" is never re-accessed and stays the LRU entry.
+        for (int i = 0; i < 150; i++) {
+            session.resetConversation();
+            session.ask("flood-" + i);
+        }
+
+        // The least-recently-used entry ("first") must have been evicted → now a miss.
+        session.resetConversation();
+        assertFalse(session.ask("first").isCacheHit(),
+                "least-recently-used entry should be evicted once the cap is exceeded");
+
+        // A recently used entry is still cached → the cache still functions (it wasn't cleared).
+        session.resetConversation();
+        assertTrue(session.ask("flood-149").isCacheHit(),
+                "a recently used entry should remain cached");
+    }
+
     /**
      * This is the ONLY real API test.
      * Keep it disabled and run manually.
