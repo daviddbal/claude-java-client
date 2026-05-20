@@ -25,6 +25,14 @@ public class OKHttpClaudeClient implements ClaudeClient {
     private static final String BETA_PROMPT_CACHE = "prompt-caching-2024-07-31";
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
 
+    /** Default max output tokens when not specified. */
+    public static final int DEFAULT_MAX_TOKENS = 4096 * 4;
+
+    // Number of retries (in addition to the first attempt) for transient API failures.
+    private static final int MAX_RETRIES = 3;
+    private static final long BASE_BACKOFF_MS = 500;
+    private static final long MAX_BACKOFF_MS = 8_000;
+
     // Dumps every request/response (including the full source-code system prompt and
     // conversation) to disk. Off by default; opt in with CLAUDE_COLLECT_RAW=true.
     private static final boolean COLLECT_CLAUDE_RAW =
@@ -53,7 +61,7 @@ public class OKHttpClaudeClient implements ClaudeClient {
     }
 
     public OKHttpClaudeClient(String apiKey, String systemPrompt) {
-        this(apiKey, 4096 * 4, systemPrompt);
+        this(apiKey, DEFAULT_MAX_TOKENS, systemPrompt);
     }
 
     public RawResponse send(String model, List<ClaudeMessage> conversationTurns) throws IOException {
@@ -101,21 +109,75 @@ public class OKHttpClaudeClient implements ClaudeClient {
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
 
-        try (Response response = SHARED_HTTP_CLIENT.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
+        for (int attempt = 0; ; attempt++) {
+            Response response;
+            try {
+                response = SHARED_HTTP_CLIENT.newCall(request).execute();
+            } catch (IOException networkError) {
+                // Connection/read failures are transient; retry with backoff.
+                if (attempt < MAX_RETRIES) {
+                    sleep(backoffMillis(attempt));
+                    continue;
+                }
+                throw networkError;
+            }
+
+            try (response) {
+                if (response.isSuccessful()) {
+                    String responseStr = response.body() != null ? response.body().string() : "";
+                    if (COLLECT_CLAUDE_RAW) {
+                        saveRaw("collected-claude-responses", "response", requestId, responseStr);
+                    }
+                    return parseResponse(responseStr);
+                }
+
+                int code = response.code();
                 String errorBody = response.body() != null ? response.body().string() : "(no body)";
-                throw new IOException("Claude API error " + response.code() + ": " + errorBody);
+
+                if (isRetryable(code) && attempt < MAX_RETRIES) {
+                    sleep(retryDelayMillis(response, attempt));
+                    continue;
+                }
+
+                throw new IOException("Claude API error " + code + ": " + errorBody);
             }
+        }
+    }
 
-            String responseStr = response.body() != null ? response.body().string() : "";
+    /** Transient HTTP statuses that are worth retrying. */
+    private static boolean isRetryable(int code) {
+        return code == 429   // rate limited
+                || code == 500   // transient API error
+                || code == 502
+                || code == 503
+                || code == 504
+                || code == 529;  // overloaded
+    }
 
-            if (COLLECT_CLAUDE_RAW) {
-                saveRaw("collected-claude-responses", "response", requestId, responseStr);
+    /** Honors a Retry-After header (seconds) when present, otherwise uses exponential backoff. */
+    private static long retryDelayMillis(Response response, int attempt) {
+        String retryAfter = response.header("Retry-After");
+        if (retryAfter != null) {
+            try {
+                return Long.parseLong(retryAfter.trim()) * 1000L;
+            } catch (NumberFormatException ignored) {
+                // not a plain seconds value — fall through to backoff
             }
+        }
+        return backoffMillis(attempt);
+    }
 
-            RawResponse rawResponse = parseResponse(responseStr);
+    private static long backoffMillis(int attempt) {
+        return Math.min(BASE_BACKOFF_MS << attempt, MAX_BACKOFF_MS);
+    }
 
-            return rawResponse;
+    private static void sleep(long millis) throws IOException {
+        if (millis <= 0) return;
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while backing off before retry", e);
         }
     }
 

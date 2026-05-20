@@ -136,7 +136,7 @@ class ClaudeRunnerCachingTest {
                 contextCollector,
                 store,
                 new ClaudeResponseParser(),
-                new ClaudeClientConfig("dummy-api-key", 4096, true, ""),
+                new ClaudeClientConfig("dummy-api-key", 4096, ""),
                 List.of()
         );
 
@@ -163,7 +163,7 @@ class ClaudeRunnerCachingTest {
                 contextCollector,
                 store,
                 new ClaudeResponseParser(),
-                new ClaudeClientConfig("dummy-api-key", 4096, true, ""),
+                new ClaudeClientConfig("dummy-api-key", 4096, ""),
                 List.of()
         );
 
@@ -225,7 +225,7 @@ class ClaudeRunnerCachingTest {
                 contextCollector,
                 store,
                 new ClaudeResponseParser(),
-                new ClaudeClientConfig("dummy-api-key", 4096, true, ""),
+                new ClaudeClientConfig("dummy-api-key", 4096, ""),
                 List.of()
         );
 
@@ -236,7 +236,6 @@ class ClaudeRunnerCachingTest {
         assertNotNull(config);
         assertEquals("dummy-api-key", config.apiKey());
         assertEquals(4096, config.maxTokens());
-        assertTrue(config.enableCaching());
         assertTrue(config.systemPrompt().contains("class Test {}"));
     }
 }

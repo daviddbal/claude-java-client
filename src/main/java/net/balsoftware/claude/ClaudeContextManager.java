@@ -68,7 +68,7 @@ public class ClaudeContextManager {
 
         // The runner is the single source of truth for the system prompt: it builds the
         // prompt from the collected files. An empty prompt here tells it to build a fresh one.
-        ClaudeClientConfig config = new ClaudeClientConfig(apiKey, maxTokens, true, "");
+        ClaudeClientConfig config = new ClaudeClientConfig(apiKey, maxTokens, "");
 
         runner = new ClaudeRunner(
                 clientFactory,

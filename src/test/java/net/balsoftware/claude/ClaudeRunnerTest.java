@@ -32,7 +32,7 @@ class ClaudeRunnerTest {
         store                = new ConversationStore();
 
         mockFactory = config -> mockClient;
-        initialConfig = new ClaudeClientConfig("test-api-key", 8192, true, "");
+        initialConfig = new ClaudeClientConfig("test-api-key", 8192, "");
 
         when(mockContextCollector.getContextRoot()).thenReturn(CONTEXT_ROOT);
         when(mockContextCollector.collect()).thenReturn(List.of());

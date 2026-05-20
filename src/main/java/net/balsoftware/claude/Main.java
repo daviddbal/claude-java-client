@@ -25,7 +25,7 @@ public class Main {
         );
 
         int maxTokens = Integer.parseInt(
-                System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(4096 * 4))
+                System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(OKHttpClaudeClient.DEFAULT_MAX_TOKENS))
         );
 
         ClaudeClientFactory factory = config -> new OKHttpClaudeClient(
