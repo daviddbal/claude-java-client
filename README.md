@@ -47,7 +47,7 @@ java -jar target/claude-1.0.0-SNAPSHOT.jar
 mvn test
 ```
 
-The suite has **100 tests** (JUnit 5). Six are disabled by default — they hit the
+The suite has **105 tests** (JUnit 5). Six are disabled by default — they hit the
 real Claude API and are meant to be run manually with a valid key.
 
 ## Configuration

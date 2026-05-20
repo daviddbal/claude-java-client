@@ -101,7 +101,7 @@ public class OKHttpClaudeClient implements ClaudeClient {
         }
 
         Request request = new Request.Builder()
-                .url(API_URL)
+                .url(apiUrl())
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", ANTHROPIC_VERSION)
                 .header("anthropic-beta", BETA_PROMPT_CACHE)
@@ -142,6 +142,11 @@ public class OKHttpClaudeClient implements ClaudeClient {
                 throw new IOException("Claude API error " + code + ": " + errorBody);
             }
         }
+    }
+
+    /** The endpoint to POST to. Overridable so tests can point at an in-process server. */
+    String apiUrl() {
+        return API_URL;
     }
 
     /** Transient HTTP statuses that are worth retrying. */
