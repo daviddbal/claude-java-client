@@ -30,22 +30,23 @@ public class OKHttpClaudeClient implements ClaudeClient {
     private static final boolean COLLECT_CLAUDE_RAW =
             Boolean.parseBoolean(System.getenv().getOrDefault("CLAUDE_COLLECT_RAW", "false"));
 
+    // OkHttp is designed to be shared: one instance backs all clients so connection and
+    // thread pools are reused instead of leaked per system-prompt change.
+    private static final OkHttpClient SHARED_HTTP_CLIENT = new OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build();
+
     private final String apiKey;
     private final int maxTokens;
     private final String systemPrompt;
-    private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
 
     public OKHttpClaudeClient(String apiKey, int maxTokens, String systemPrompt) {
         this.apiKey = apiKey;
         this.maxTokens = maxTokens;
         this.systemPrompt = systemPrompt == null ? "" : systemPrompt;
-
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(120, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
-                .build();
 
         this.objectMapper = new ObjectMapper();
         this.objectMapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
@@ -100,7 +101,7 @@ public class OKHttpClaudeClient implements ClaudeClient {
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
 
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = SHARED_HTTP_CLIENT.newCall(request).execute()) {
             if (!response.isSuccessful()) {
                 String errorBody = response.body() != null ? response.body().string() : "(no body)";
                 throw new IOException("Claude API error " + response.code() + ": " + errorBody);

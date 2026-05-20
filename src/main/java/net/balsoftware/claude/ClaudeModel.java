@@ -2,7 +2,6 @@ package net.balsoftware.claude;
 
 public enum ClaudeModel {
 
-    // NOTE: placeholders until Anthropic releases/you confirm exact IDs
     HAIKU_5("claude-haiku-4-5-20251001"),
 
     SONNET_4_6("claude-sonnet-4-6"),

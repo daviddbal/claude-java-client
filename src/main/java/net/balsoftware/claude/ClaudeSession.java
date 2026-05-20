@@ -3,7 +3,7 @@ package net.balsoftware.claude;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -11,6 +11,9 @@ import java.util.Map;
  * High-level API for Claude sessions.
  * Coordinates context management, execution, response caching, token tracking, and file I/O.
  * Delegates core responsibilities to specialized classes.
+ *
+ * <p><strong>Not thread-safe.</strong> A session and its backing stores hold mutable,
+ * unsynchronized state; use a single session from one thread at a time.
  */
 public class ClaudeSession {
 
@@ -23,10 +26,19 @@ public class ClaudeSession {
     private final ClaudeResponseParser responseParser;
     private final ClaudeTokenTracker tokenTracker;
 
+    private static final int MAX_CACHED_RESPONSES = 100;
+
     // Response cache: key = (system prompt + conversation history + message), value = cached response.
     // The key MUST include the conversation history: the same message asked in a different
     // conversation state is a different request and must not return an earlier answer.
-    private final Map<CacheKey, ClaudeStructuredResponseWithTokens> responseCache = new HashMap<>();
+    // Bounded LRU so a long-running session can't grow the cache without limit.
+    private final Map<CacheKey, ClaudeStructuredResponseWithTokens> responseCache =
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<CacheKey, ClaudeStructuredResponseWithTokens> eldest) {
+                    return size() > MAX_CACHED_RESPONSES;
+                }
+            };
 
     /**
      * Composite, value-equality cache key. Using the full content (not a hash code) avoids

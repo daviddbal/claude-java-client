@@ -1,7 +1,6 @@
 package net.balsoftware.claude;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -10,8 +9,12 @@ import java.util.List;
 import java.util.Map;
 
 public class SourceFileCollector {
+
+    /** Cached file content tagged with the last-modified time it was read at. */
+    private record CachedFile(long lastModified, SourceFile file) {}
+
     private final SourceRootConfig sourceRootConfig;
-    private final Map<Path, SourceFile> cache = new HashMap<>();
+    private final Map<Path, CachedFile> cache = new HashMap<>();
 
     public SourceFileCollector(SourceRootConfig sourceRootConfig) {
         this.sourceRootConfig = sourceRootConfig;
@@ -26,20 +29,28 @@ public class SourceFileCollector {
             }
 
             try {
-                Path sourcePath = resolveSourcePath(clazz);
-                files.add(cache.computeIfAbsent(sourcePath, p -> {
-                    try {
-                        return new SourceFile(p, Files.readString(p));
-                    } catch (IOException e) {
-                        throw new UncheckedIOException(e);
-                    }
-                }));
+                files.add(readCached(resolveSourcePath(clazz)));
             } catch (IOException e) {
-                // Log and skip classes whose source files cannot be resolved
+                // Log and skip classes whose source files cannot be resolved/read
                 System.err.println("[SourceFileCollector] Could not resolve source for " + clazz.getName() + ": " + e.getMessage());
             }
         }
         return files;
+    }
+
+    /**
+     * Reads a source file, reusing the cached content only while the file is unchanged.
+     * This avoids serving stale content if the file is edited during a session.
+     */
+    private SourceFile readCached(Path path) throws IOException {
+        long lastModified = Files.getLastModifiedTime(path).toMillis();
+        CachedFile cached = cache.get(path);
+        if (cached != null && cached.lastModified() == lastModified) {
+            return cached.file();
+        }
+        SourceFile fresh = new SourceFile(path, Files.readString(path));
+        cache.put(path, new CachedFile(lastModified, fresh));
+        return fresh;
     }
 
     /**

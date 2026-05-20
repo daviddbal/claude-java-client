@@ -19,6 +19,10 @@ import java.util.stream.Stream;
  */
 public class ContextFileCollector {
 
+    // Per-file cap: keeps an oversized or accidentally-committed file from bloating
+    // (and inflating the cost of) every request.
+    private static final long MAX_FILE_BYTES = 256 * 1024; // 256 KB
+
     private final Path contextRoot;
 
     public ContextFileCollector(Path contextRoot) {
@@ -40,6 +44,11 @@ public class ContextFileCollector {
                     .sorted()                          // deterministic order
                     .forEach(p -> {
                         try {
+                            if (Files.size(p) > MAX_FILE_BYTES) {
+                                System.err.println("[ContextFileCollector] Skipping large file (> "
+                                        + (MAX_FILE_BYTES / 1024) + " KB): " + p);
+                                return;
+                            }
                             result.add(new SourceFile(p, Files.readString(p)));
                         } catch (IOException e) {
                             // Skip unreadable files (binary, permissions, etc.) silently
