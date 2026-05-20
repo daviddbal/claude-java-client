@@ -37,6 +37,16 @@ public class ConversationStore {
     }
 
     /**
+     * Replaces all turns with the given restored turns (used when rehydrating a
+     * persisted session). Honors the same trimming policy as {@link #addTurn}.
+     */
+    public void restoreTurns(List<ClaudeTurn> restoredTurns) {
+        turns.clear();
+        turns.addAll(restoredTurns);
+        trimIfNeeded();
+    }
+
+    /**
      * Returns all turns in order.
      */
     public List<ClaudeTurn> getTurns() {

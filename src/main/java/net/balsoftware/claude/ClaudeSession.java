@@ -2,6 +2,7 @@ package net.balsoftware.claude;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -242,11 +243,76 @@ public class ClaudeSession {
                 .toList();
     }
 
+    // -------- RESTORE --------
+
+    /**
+     * Rehydrates this session from a persisted snapshot, resolving the snapshot's
+     * stored context class names via {@link Class#forName(String)}.
+     *
+     * @throws IllegalArgumentException if a stored context class cannot be resolved
+     */
+    public void restore(SessionSnapshot snapshot) throws IOException {
+        restore(snapshot, resolveContextClasses(snapshot.loadedContextClassNames()));
+    }
+
+    /**
+     * Rehydrates this session from a persisted snapshot using the caller-supplied
+     * context classes. After this call, conversation turns and accumulated token
+     * totals match the saved session, and the next {@link #ask(String)} replays the
+     * restored turns as conversation history.
+     */
+    public void restore(SessionSnapshot snapshot, List<Class<?>> contextClasses) throws IOException {
+        resetAll();
+        loadContext(contextClasses);
+
+        List<ClaudeTurn> turns = snapshot.turns().stream()
+                .map(SerializableTurn::toClaudeTurn)
+                .toList();
+        conversationStore.restoreTurns(turns);
+
+        tokenTracker.restoreFromSnapshot(
+                snapshot.totalInputTokens(),
+                snapshot.totalOutputTokens(),
+                snapshot.totalCacheCreationTokens(),
+                snapshot.totalCacheReadTokens()
+        );
+
+        if (!turns.isEmpty()) {
+            ClaudeTurn last = turns.get(turns.size() - 1);
+            this.lastResponse = new ClaudeStructuredResponseWithTokens(
+                    last.structured(),
+                    last.inputTokens(),
+                    last.outputTokens(),
+                    last.cacheCreationTokens(),
+                    last.cacheReadTokens()
+            );
+        }
+    }
+
+    private static List<Class<?>> resolveContextClasses(List<String> classNames) {
+        List<Class<?>> classes = new ArrayList<>();
+        for (String name : classNames) {
+            try {
+                classes.add(Class.forName(name));
+            } catch (ClassNotFoundException e) {
+                throw new IllegalArgumentException("Cannot resolve context class: " + name, e);
+            }
+        }
+        return classes;
+    }
+
     // -------- PERSISTENCE HELPERS (REQUIRED BY SessionPersistence) --------
 
     public List<SerializableTurn> getConversationTurns() {
         return conversationStore.getTurns().stream()
-                .map(t -> new SerializableTurn(t.getUserMessage(), t.getAssistantMessage()))
+                .map(t -> new SerializableTurn(
+                        t.getUserMessage(),
+                        t.getAssistantMessage(),
+                        t.structured(),
+                        t.inputTokens(),
+                        t.outputTokens(),
+                        t.cacheCreationTokens(),
+                        t.cacheReadTokens()))
                 .toList();
     }
 

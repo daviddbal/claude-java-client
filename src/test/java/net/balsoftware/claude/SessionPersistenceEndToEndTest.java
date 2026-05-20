@@ -54,7 +54,7 @@ class SessionPersistenceEndToEndTest {
         System.out.println("   Quick view: cat " + manifestPath + " | jq .turns[].userMessage");
 
         // ===== 5. RESTORE TO NEW SESSION =====
-        System.out.println("\n🔄 4. Restoring context to new session...");
+        System.out.println("\n🔄 4. Restoring full session (context + turns + tokens)...");
         ClaudeSession restored = ClaudeSession.builder()
                 .apiKey(apiKey)
                 .model(ClaudeModel.HAIKU_5.id())
@@ -64,20 +64,32 @@ class SessionPersistenceEndToEndTest {
         List<Class<?>> restoredContext = snapshot.loadedContextClassNames().stream()
                 .map(this::loadClass)
                 .collect(Collectors.toList());
-        restored.loadContext(restoredContext);
+        restored.restore(snapshot, restoredContext);
 
+        // The restore must rehydrate context, conversation turns, and token totals.
         assertEquals(originalContext, restored.getLoadedContextClassNames());
-        System.out.println("✅ Context restored: " + restored.getLoadedContextClassNames());
+        assertEquals(originalTurns, restored.getTurnCount(), "all turns should be restored");
+        assertEquals(original.getConversationHistory(), restored.getConversationHistory(),
+                "restored conversation history should match the original");
+        assertEquals(originalTokens, restored.getTotalInputTokens(), "token totals should be restored");
+        System.out.println("✅ Restored: " + restored.getTurnCount() + " turns, "
+                + restored.getTotalInputTokens() + " input tokens, context="
+                + restored.getLoadedContextClassNames());
 
         // ===== 6. PROVE RECALL/CONTINUATION =====
+        // This only works because restore() replays the prior turns to the API —
+        // the prompt deliberately avoids the word "Java" so a real recall is required.
         System.out.println("\n🔄 5. Testing conversation recall...");
         ClaudeStructuredResponseWithTokens followUp = restored.ask(
-                "Based on our previous Java discussion, recommend a microservices stack"
+                "Based on the language we just discussed, recommend a microservices stack"
         );
 
         String recallResponse = followUp.structured().description();
         assertTrue(recallResponse.length() > 100, "Should generate meaningful response");
-        assertTrue(recallResponse.toLowerCase().contains("java"), "Should reference Java context");
+        assertTrue(recallResponse.toLowerCase().contains("java"),
+                "Should reference Java from the restored conversation, not the prompt");
+        assertEquals(originalTurns + 1, restored.getTurnCount(),
+                "follow-up should append to the restored history");
 
         System.out.println("✅ RECALL WORKS:");
         System.out.println("   " + recallResponse.substring(0, 200) + "...");

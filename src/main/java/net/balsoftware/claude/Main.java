@@ -47,16 +47,21 @@ public class Main {
         session.loadContext(List.of());
         printContextFiles(session);
 
+        SessionPersistence persistence = new SessionPersistence(Path.of("sessions"));
+
         System.out.println("Claude Coding Assistant — model: " + model + " | max_tokens: " + maxTokens);
         System.out.println("""
                 Commands:
-                  reset   — clear conversation history (keeps loaded context)
-                  write   — write files from last response to ./generated/
-                  show    — print generated file contents
-                  turns   — show number of turns
-                  tokens  — show token usage
-                  context — show loaded context files
-                  quit    — exit
+                  reset        — clear conversation history (keeps loaded context)
+                  write        — write files from last response to ./generated/
+                  show         — print generated file contents
+                  turns        — show number of turns
+                  tokens       — show token usage
+                  context      — show loaded context files
+                  save <name>  — persist the current session to ./sessions/<name>/
+                  resume <name>— restore a previously saved session
+                  sessions     — list saved sessions
+                  quit         — exit
                 --------------------------------------------------
                 Input modes:
                   - Single line: just type and press Enter
@@ -73,6 +78,41 @@ public class Main {
             System.out.flush();
 
             String input = inputReader.read(scanner);
+            String trimmedInput = input.trim();
+
+            if (trimmedInput.regionMatches(true, 0, "save ", 0, 5)) {
+                String name = trimmedInput.substring(5).trim();
+                if (name.isBlank()) {
+                    System.out.println("[Usage: save <name>]");
+                } else {
+                    try {
+                        persistence.saveSession(name, session);
+                        System.out.println("[Session saved to "
+                                + persistence.getStorageRoot().resolve(name) + "]");
+                    } catch (Exception e) {
+                        System.err.println("[Error saving session: " + e.getMessage() + "]");
+                    }
+                }
+                continue;
+            }
+
+            if (trimmedInput.regionMatches(true, 0, "resume ", 0, 7)) {
+                String name = trimmedInput.substring(7).trim();
+                if (name.isBlank()) {
+                    System.out.println("[Usage: resume <name>]");
+                } else {
+                    try {
+                        SessionSnapshot snapshot = persistence.loadSession(name);
+                        session.restore(snapshot);
+                        last = session.getLastResponse();
+                        System.out.println("[Session '" + name + "' restored — "
+                                + session.getTurnCount() + " turns | " + session.tokenSummary() + "]");
+                    } catch (Exception e) {
+                        System.err.println("[Error resuming session: " + e.getMessage() + "]");
+                    }
+                }
+                continue;
+            }
 
             switch (input.toLowerCase()) {
                 case "quit" -> {
@@ -117,6 +157,24 @@ public class Main {
                 }
                 case "context" -> {
                     printContextFiles(session);
+                    continue;
+                }
+                case "sessions" -> {
+                    try {
+                        List<String> names = persistence.listSessions();
+                        if (names.isEmpty()) {
+                            System.out.println("[No saved sessions]");
+                        } else {
+                            System.out.println("Saved sessions:");
+                            names.forEach(n -> System.out.println("  " + n));
+                        }
+                    } catch (Exception e) {
+                        System.err.println("[Error listing sessions: " + e.getMessage() + "]");
+                    }
+                    continue;
+                }
+                case "save", "resume" -> {
+                    System.out.println("[Usage: " + input.toLowerCase() + " <name>]");
                     continue;
                 }
                 default -> {}

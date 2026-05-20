@@ -41,15 +41,16 @@ import java.util.List;
  *
  * ClaudeSession:
  *    - MAINTAINS SAME SYSTEM PROMPT across requests (via contextManager caching)
- *    - RESTORES SYSTEM PROMPT from persistence to reuse cache
- *    - Session persistence saves system prompt for future restoration
+ *    - REBUILDS SYSTEM PROMPT on restore by reloading the same context
+ *    - Session persistence saves the context class names and turns for restoration
  *
  * BEST PRACTICES:
  * ===============
  * 1. Load context ONCE and reuse (don't reload with same classes)
  * 2. Make multiple requests in quick succession (<5 min)
  * 3. Ensure system prompt is >1KB (easy with loaded source files)
- * 4. Use persistSession/restoreSession to preserve cache benefits
+ * 4. Persist with SessionPersistence.saveSession() and resume with
+ *    ClaudeSession.restore() to rebuild the same prompt and reuse cache benefits
  * 5. Verify you're hitting the real Claude API (not mocks)
  * 6. Check response headers: look for cache_read_input_tokens > 0
  */
@@ -110,7 +111,8 @@ public class PromptCacheDiagnostics {
         System.out.println("\n4. RECOMMENDATIONS:");
         System.out.println("   • Load context early and keep it loaded");
         System.out.println("   • Make subsequent requests within 5 minutes");
-        System.out.println("   • Use session.saveSession() / restoreSession() to preserve cache");
+        System.out.println("   • Persist with SessionPersistence.saveSession() and resume with");
+        System.out.println("     ClaudeSession.restore() to rebuild the same prompt and reuse cache");
         System.out.println("   • Verify you're using real API key (not mock)");
         System.out.println("   • Check that system prompt remains unchanged between requests");
 
