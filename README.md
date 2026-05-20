@@ -1,5 +1,7 @@
 # claude-java-client
 
+[![CI](https://github.com/daviddbal/claude-java-client/actions/workflows/ci.yml/badge.svg)](https://github.com/daviddbal/claude-java-client/actions/workflows/ci.yml)
+
 An interactive CLI (and small library) for multi-turn conversations with Claude about your
 Java codebase. You point it at source/context files, ask Claude to generate or modify code,
 and it returns structured JSON with file contents you can write to disk. Conversations can be
@@ -48,8 +50,9 @@ java -jar target/claude-1.0.0-SNAPSHOT.jar
 mvn test
 ```
 
-The suite has **121 tests** (JUnit 5). Six are disabled by default — they hit the
-real Claude API and are meant to be run manually with a valid key.
+The suite has **124 tests** (JUnit 5). Six are disabled by default — they hit the
+real Claude API and are meant to be run manually with a valid key. CI runs the suite
+on every push and pull request.
 
 ## Configuration
 
@@ -103,6 +106,8 @@ Builder options worth knowing:
   Set `false` to record only file paths (fewer tokens).
 - `.logResponses(boolean)` — default `false`; when `true`, each response is logged
   to stdout. Off by default so the library stays quiet when embedded.
+- `.maxTurns(int)` — default `10`; sliding-window size for conversation history. Only
+  the most recent N turns are kept and sent to the API.
 
 ### Streaming
 

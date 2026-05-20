@@ -113,6 +113,30 @@ class ClaudeSessionTest {
     }
 
     @Test
+    void respectsConfiguredMaxTurns() throws IOException {
+        ClaudeClientFactory factory = config -> new OKHttpClaudeClient(
+                config.apiKey(), config.maxTokens(), config.systemPrompt()) {
+            @Override
+            public RawResponse send(String model, List<ClaudeMessage> conversation) {
+                return new RawResponse("{\"type\":\"explanation\",\"description\":\"x\",\"files\":[]}", 1, 1, 0, 0);
+            }
+        };
+
+        ClaudeSession bounded = ClaudeSession.builder()
+                .apiKey("k")
+                .maxTurns(2)
+                .clientFactory(factory)
+                .build();
+        bounded.loadContext(List.of());
+
+        bounded.ask("a");
+        bounded.ask("b");
+        bounded.ask("c");
+
+        assertEquals(2, bounded.getTurnCount(), "history should be capped at the configured maxTurns");
+    }
+
+    @Test
     void testCacheHitBehavior() throws IOException {
         session.loadContext(List.of());
 

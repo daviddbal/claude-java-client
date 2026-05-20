@@ -10,10 +10,20 @@ import java.util.List;
  */
 public class ConversationStore {
 
-    private static final int MAX_TURNS = 10;
+    public static final int DEFAULT_MAX_TURNS = 10;
 
+    private final int maxTurns;
     private String systemPrompt = "";
     private final List<ClaudeTurn> turns = new ArrayList<>();
+
+    public ConversationStore() {
+        this(DEFAULT_MAX_TURNS);
+    }
+
+    /** @param maxTurns sliding-window size; values &lt;= 0 fall back to the default. */
+    public ConversationStore(int maxTurns) {
+        this.maxTurns = maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS;
+    }
 
     // ================================================================ system prompt
 
@@ -105,9 +115,9 @@ public class ConversationStore {
     // ================================================================ private
 
     private void trimIfNeeded() {
-        if (turns.size() > MAX_TURNS) {
+        if (turns.size() > maxTurns) {
             List<ClaudeTurn> trimmed = new ArrayList<>(
-                    turns.subList(turns.size() - MAX_TURNS, turns.size())
+                    turns.subList(turns.size() - maxTurns, turns.size())
             );
             turns.clear();
             turns.addAll(trimmed);

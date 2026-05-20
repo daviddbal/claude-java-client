@@ -99,6 +99,17 @@ class ConversationStoreTest {
     }
 
     @Test
+    void customMaxTurnsTrimsToConfiguredSize() {
+        ConversationStore store = new ConversationStore(2);
+        for (int i = 0; i < 5; i++) {
+            store.addTurn(createDummyTurn("u" + i, "a" + i));
+        }
+
+        assertEquals(2, store.getTurnCount());
+        assertEquals("u3", store.getMessages().get(0).content(), "only the last 2 turns are kept");
+    }
+
+    @Test
     void getMessagesIsUnmodifiable() {
         ConversationStore store = new ConversationStore();
         store.addTurn(createDummyTurn("hi", "bye"));

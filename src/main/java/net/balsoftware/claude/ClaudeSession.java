@@ -1,5 +1,7 @@
 package net.balsoftware.claude;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -32,6 +34,7 @@ public class ClaudeSession {
     private final ConversationStore conversationStore;
     private final ClaudeResponseParser responseParser;
     private final ClaudeTokenTracker tokenTracker;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final int MAX_CACHED_RESPONSES = 100;
 
@@ -64,7 +67,7 @@ public class ClaudeSession {
         this.includeFileContentInHistory = builder.includeFileContentInHistory;
         this.logResponses = builder.logResponses;
         this.fileWriter = new GeneratedFileWriter();
-        this.conversationStore = new ConversationStore();
+        this.conversationStore = new ConversationStore(builder.maxTurns);
         this.responseParser = new ClaudeResponseParser();
         this.tokenTracker = new ClaudeTokenTracker();
         this.lastResponse = null;
@@ -114,8 +117,8 @@ public class ClaudeSession {
 
     /**
      * Asks Claude a question, streaming text chunks to {@code onTextDelta} as they arrive, and
-     * returns the final structured response. Streaming happens only on a cache miss (a cache
-     * hit returns immediately without invoking the callback).
+     * returns the final structured response. On a cache hit there is no live stream, so the
+     * cached response (as its JSON) is delivered to the callback in a single chunk.
      */
     public ClaudeStructuredResponseWithTokens askStreaming(String message, java.util.function.Consumer<String> onTextDelta)
             throws IOException {
@@ -126,7 +129,7 @@ public class ClaudeSession {
      * Asks Claude a question, streaming the human-readable {@code description} prose to
      * {@code onProse} as it is generated (the structured JSON is parsed incrementally so the
      * caller sees readable text rather than raw JSON). Returns the final structured response.
-     * As with {@link #askStreaming}, nothing is streamed on a cache hit.
+     * On a cache hit, the cached description is delivered to the callback in one chunk.
      */
     public ClaudeStructuredResponseWithTokens askStreamingProse(String message, java.util.function.Consumer<String> onProse)
             throws IOException {
@@ -155,6 +158,12 @@ public class ClaudeSession {
                     cached.inputTokens()    // cacheReadTokens (simulated)
             );
             tokenTracker.accumulate(response);
+
+            // There is no live stream on a cache hit, but a streaming caller still expects the
+            // content: deliver the cached response (as its JSON) to the callback in one chunk.
+            if (onTextDelta != null) {
+                onTextDelta.accept(objectMapper.writeValueAsString(cached.structured()));
+            }
         } else {
             // Execute and cache (streaming when a callback is supplied)
             response = contextManager.getExecutor().execute(model, message, onTextDelta);
@@ -435,6 +444,7 @@ public class ClaudeSession {
         private Path outputRoot = Path.of("generated");
         private Path contextFilesRoot = Path.of("context-files");
         private int maxTokens = 8192;
+        private int maxTurns = ConversationStore.DEFAULT_MAX_TURNS;
         private boolean includeFileContentInHistory = true;
         private boolean logResponses = false;
 
@@ -469,6 +479,15 @@ public class ClaudeSession {
 
         public Builder maxTokens(int maxTokens) {
             this.maxTokens = maxTokens;
+            return this;
+        }
+
+        /**
+         * Sliding-window size for conversation history: only the most recent {@code maxTurns}
+         * turns are kept and sent to the API. Defaults to {@value ConversationStore#DEFAULT_MAX_TURNS}.
+         */
+        public Builder maxTurns(int maxTurns) {
+            this.maxTurns = maxTurns;
             return this;
         }
 
