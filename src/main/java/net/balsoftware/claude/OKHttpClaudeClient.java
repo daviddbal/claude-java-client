@@ -24,7 +24,11 @@ public class OKHttpClaudeClient implements ClaudeClient {
     private static final String ANTHROPIC_VERSION = "2023-06-01";
     private static final String BETA_PROMPT_CACHE = "prompt-caching-2024-07-31";
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private static final boolean COLLECT_CLAUDE_RAW = true;
+
+    // Dumps every request/response (including the full source-code system prompt and
+    // conversation) to disk. Off by default; opt in with CLAUDE_COLLECT_RAW=true.
+    private static final boolean COLLECT_CLAUDE_RAW =
+            Boolean.parseBoolean(System.getenv().getOrDefault("CLAUDE_COLLECT_RAW", "false"));
 
     private final String apiKey;
     private final int maxTokens;

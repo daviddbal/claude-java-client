@@ -115,11 +115,23 @@ class ClaudeSessionTest {
     @Test
     void testCacheHitBehavior() throws IOException {
         session.loadContext(List.of());
-        ClaudeStructuredResponseWithTokens first = session.ask("Same question");
-        assertTrue(session.isCacheHitObserved() == false);
 
+        ClaudeStructuredResponseWithTokens first = session.ask("Same question");
+        assertFalse(session.isCacheHitObserved());
+
+        // Asking again in a changed conversation (the first turn is now history) must NOT
+        // serve the earlier answer — the request is genuinely different, so it re-queries.
+        session.ask("Same question");
+        assertFalse(session.isCacheHitObserved(),
+                "Same message in a changed conversation should not be a stale cache hit");
+
+        // Reset to the original state: the identical request now hits the cache and returns
+        // the original response.
+        session.resetConversation();
         ClaudeStructuredResponseWithTokens cached = session.ask("Same question");
-        assertTrue(session.isCacheHitObserved() == true,
-                "Repeated identical question should trigger cache hit");
+        assertTrue(session.isCacheHitObserved(),
+                "Identical request in identical state should hit the response cache");
+        assertEquals(first.structured().description(), cached.structured().description(),
+                "Cache hit should return the original response");
     }
 }

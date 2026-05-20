@@ -16,6 +16,22 @@ public class ClaudeResponseParser {
 
     public ClaudeStructuredResponse parseStructured(String rawText) throws IOException {
         String cleaned = sanitize(rawText);
+
+        // Attempt to parse the whole cleaned payload first when it is a single JSON object.
+        // This is the common case and, unlike brace-counting extraction, it is not confused
+        // by '{' or '}' that appear inside string values (e.g. the braces in generated code).
+        try {
+            JsonNode root = objectMapper.readTree(cleaned);
+            if (root != null && root.isObject()) {
+                return parseObject(root);
+            }
+        } catch (IllegalStateException validation) {
+            // Parsed as a JSON object but failed validation — extraction can't help, propagate.
+            throw new IOException("Failed to parse LLM JSON response: " + validation.getMessage(), validation);
+        } catch (Exception ignored) {
+            // Not directly parseable (e.g. surrounded by prose) — fall back to extraction.
+        }
+
         String jsonCandidate = extractJson(cleaned);
 
         if (jsonCandidate == null) {
@@ -23,7 +39,7 @@ public class ClaudeResponseParser {
         }
 
         try {
-            // Attempt standard parse first
+            // Attempt standard parse of the extracted object
             return parseJson(jsonCandidate);
         } catch (IllegalStateException e) {
             // Validation error — wrap and propagate
@@ -45,8 +61,10 @@ public class ClaudeResponseParser {
     }
 
     private ClaudeStructuredResponse parseJson(String json) throws Exception {
-        JsonNode root = objectMapper.readTree(json);
+        return parseObject(objectMapper.readTree(json));
+    }
 
+    private ClaudeStructuredResponse parseObject(JsonNode root) {
         ClaudeStructuredResponse.Type type = root.has("type")
                 ? ClaudeStructuredResponse.Type.valueOf(root.get("type").asText())
                 : ClaudeStructuredResponse.Type.explanation;

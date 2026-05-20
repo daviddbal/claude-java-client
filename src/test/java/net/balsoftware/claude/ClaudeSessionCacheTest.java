@@ -24,26 +24,37 @@ class ClaudeSessionCacheTest {
     }
 
     @Test
-    void cacheMissThenHitForIdenticalMessage() throws IOException {
-        // Use a ubiquitous context class
-        List<Class<?>> context = List.of(String.class);
+    void cacheHitWhenRequestStateIsIdentical() throws IOException {
+        session.loadContext(List.of(String.class));
 
-        session.loadContext(context);
-
-        // Use a long prompt to simulate enough tokens for caching
         String longPrompt = "hello world ".repeat(500); // ~6000 chars → enough tokens
 
-        // First call: no cache hit (cold cache)
-        ClaudeStructuredResponseWithTokens first = session.ask(longPrompt);
-        // Note: MockClaudeClient always returns the same token pattern, so no actual Anthropic cache behavior
-        // Instead, we test ClaudeSession's *response* cache
+        // First call: cold cache, no hit.
+        session.ask(longPrompt);
+        assertFalse(session.isCacheHitObserved(), "Cold call should not be a cache hit");
 
-        // Second call: should hit *response* cache in ClaudeSession
-        ClaudeStructuredResponseWithTokens second = session.ask(longPrompt);
-        
-        // The response cache key is based on (systemPrompt, message)
-        // Since message is identical, it should hit the response cache
-        assertTrue(session.isCacheHitObserved(), "Second call should observe cache behavior");
+        // Reset the conversation so the request state (system prompt + empty history + message)
+        // matches the first call exactly, then repeat → response cache hit.
+        session.resetConversation();
+        session.ask(longPrompt);
+        assertTrue(session.isCacheHitObserved(),
+                "Repeating an identical request (same state) should hit the response cache");
+    }
+
+    @Test
+    void sameMessageInDifferentHistoryDoesNotReturnStaleAnswer() throws IOException {
+        session.loadContext(List.of(String.class));
+
+        String longPrompt = "explain ".repeat(500);
+
+        // First ask adds a turn, so the second ask happens in a different conversation state.
+        session.ask(longPrompt);
+        session.ask(longPrompt);
+
+        // The cache key includes conversation history, so the second identical message must
+        // re-query rather than serve the earlier answer.
+        assertFalse(session.isCacheHitObserved(),
+                "Same message in a changed conversation must not reuse the earlier cached answer");
     }
 
     @Test
@@ -53,23 +64,25 @@ class ClaudeSessionCacheTest {
 
         String longPrompt = "foo ".repeat(2000);
 
-        // First context
+        // First context: cold, then a state-identical repeat hits.
         session.loadContext(ctx1);
-        ClaudeStructuredResponseWithTokens resp1a = session.ask(longPrompt);
+        session.ask(longPrompt);
         assertFalse(session.isCacheHitObserved(), "First call in new context should NOT hit cache");
-        
-        ClaudeStructuredResponseWithTokens resp1b = session.ask(longPrompt);
-        assertTrue(session.isCacheHitObserved(), "Second call with same message should hit response cache");
+
+        session.resetConversation();
+        session.ask(longPrompt);
+        assertTrue(session.isCacheHitObserved(), "Repeated identical request should hit response cache");
 
         session.resetAll();
 
-        // Second (different) context
+        // Different context rebuilds the system prompt and clears the cache.
         session.loadContext(ctx2);
-        ClaudeStructuredResponseWithTokens resp2a = session.ask(longPrompt);
+        session.ask(longPrompt);
         assertFalse(session.isCacheHitObserved(), "Different context resets cache, should NOT hit");
-        
-        ClaudeStructuredResponseWithTokens resp2b = session.ask(longPrompt);
-        assertTrue(session.isCacheHitObserved(), "Should hit cache for repeated call in new context");
+
+        session.resetConversation();
+        session.ask(longPrompt);
+        assertTrue(session.isCacheHitObserved(), "Repeated identical request should hit cache in new context");
     }
 
     /**

@@ -83,6 +83,37 @@ class ClaudeResponseParserTest {
     }
 
     @Test
+    void parsesCodeWhoseContentHasUnbalancedBraces() throws IOException {
+        // The content string contains a stray '}' (e.g. inside a string literal). A
+        // brace-counting extractor would mis-balance and truncate the JSON; parsing the
+        // whole payload directly handles it.
+        String json = """
+                {"type":"code","description":"tricky","files":[{"path":"X.java","content":"String s = \\"}\\"; // closing brace in a string"}]}
+                """;
+
+        ClaudeStructuredResponse r = parser.parseStructured(json);
+
+        assertEquals(1, r.files().size());
+        assertEquals("X.java", r.files().get(0).path());
+        assertTrue(r.files().get(0).content().contains("String s ="));
+    }
+
+    @Test
+    void parsesJsonSurroundedByProse() throws IOException {
+        // Falls back to extraction when the model wraps JSON in chatter.
+        String text = """
+                Sure! Here is the file:
+                {"type":"code","description":"d","files":[{"path":"P.java","content":"class P {}"}]}
+                Hope that helps.
+                """;
+
+        ClaudeStructuredResponse r = parser.parseStructured(text);
+
+        assertEquals(1, r.files().size());
+        assertEquals("P.java", r.files().get(0).path());
+    }
+
+    @Test
     void parsesCodeWithExplanation() throws IOException {
         String json = """
             {

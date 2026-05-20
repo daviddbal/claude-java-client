@@ -60,6 +60,34 @@ class GeneratedFileWriterTest {
     }
 
     @Test
+    void rejectsPathTraversalEscape(@TempDir Path tempDir) {
+        var file = new ClaudeStructuredResponse.FileItem(
+                "../escaped.java",
+                "class Escaped {}"
+        );
+
+        IOException ex = assertThrows(IOException.class,
+                () -> writer.writeAll(tempDir, responseWithFiles(List.of(file))));
+        assertTrue(ex.getMessage().contains("outside output root"));
+
+        assertFalse(Files.exists(tempDir.getParent().resolve("escaped.java")),
+                "must not write outside the output root");
+    }
+
+    @Test
+    void rejectsAbsolutePathEscape(@TempDir Path tempDir) {
+        Path outside = tempDir.getParent().resolve("absolute-escape.java");
+        var file = new ClaudeStructuredResponse.FileItem(
+                outside.toString(),
+                "class Absolute {}"
+        );
+
+        assertThrows(IOException.class,
+                () -> writer.writeAll(tempDir, responseWithFiles(List.of(file))));
+        assertFalse(Files.exists(outside), "must not write to an absolute path outside the root");
+    }
+
+    @Test
     void writesMultipleFiles(@TempDir Path tempDir) throws IOException {
 
         var files = List.of(

@@ -1,15 +1,16 @@
 package net.balsoftware.claude;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Manages context loading and caching.
- * Responsibility: Load context, cache system prompts, manage runners.
+ * Responsibility: collect context, decide when a rebuild is needed, and own the runner.
+ *
+ * <p>The system prompt itself is built in exactly one place — {@link ClaudeRunner} — which
+ * this manager delegates to. This manager only decides <em>whether</em> a new runner is
+ * needed (context unchanged → reuse the existing runner and its cached prompt/client).
  */
 public class ClaudeContextManager {
 
@@ -26,7 +27,6 @@ public class ClaudeContextManager {
     private ClaudeRunner runner;
     private ClaudeExecutor executor;
 
-    private final Map<Integer, String> promptCache = new HashMap<>();
     private int lastStaticFilesHash = 0;
 
     public ClaudeContextManager(
@@ -49,11 +49,10 @@ public class ClaudeContextManager {
 
     /**
      * Loads context from dynamic classes and static files.
-     * Rebuilds runner only if context has changed.
+     * Rebuilds the runner only if context has changed; otherwise reuses the existing one.
      */
     public void loadContext(List<Class<?>> dynamicContextClasses) throws IOException {
         List<SourceFile> staticContextFiles = contextFileCollector.collect();
-        List<SourceFile> dynamicSourceFiles = sourceFileCollector.collect(dynamicContextClasses);
 
         int contextHash = java.util.Objects.hash(dynamicContextClasses, staticContextFiles);
 
@@ -61,26 +60,15 @@ public class ClaudeContextManager {
         if (java.util.Objects.equals(dynamicContextClasses, loadedContextClasses)
                 && contextHash == lastStaticFilesHash
                 && runner != null) {
-            return; // No change, reuse existing runner
+            return; // No change, reuse existing runner (and its cached prompt + client)
         }
 
         loadedContextClasses = dynamicContextClasses;
         lastStaticFilesHash = contextHash;
 
-        // Check cache for system prompt
-        String cachedSystemPrompt = promptCache.get(contextHash);
-
-        if (cachedSystemPrompt == null) {
-            cachedSystemPrompt = buildSystemPrompt(dynamicSourceFiles, staticContextFiles);
-            promptCache.put(contextHash, cachedSystemPrompt);
-        }
-
-        ClaudeClientConfig config = new ClaudeClientConfig(
-                apiKey,
-                maxTokens,
-                true,
-                cachedSystemPrompt
-        );
+        // The runner is the single source of truth for the system prompt: it builds the
+        // prompt from the collected files. An empty prompt here tells it to build a fresh one.
+        ClaudeClientConfig config = new ClaudeClientConfig(apiKey, maxTokens, true, "");
 
         runner = new ClaudeRunner(
                 clientFactory,
@@ -93,53 +81,6 @@ public class ClaudeContextManager {
         );
 
         executor = new ClaudeExecutor(runner, responseParser);
-    }
-
-    /**
-     * Builds the full system prompt from source and context files.
-     */
-    private String buildSystemPrompt(List<SourceFile> sourceFiles, List<SourceFile> contextFiles) {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append(ClaudeSystemPrompt.build());
-
-        if (!sourceFiles.isEmpty()) {
-            sb.append("\n\nSOURCE FILES:\n");
-            for (SourceFile f : sourceFiles) {
-                sb.append("\n--- ").append(f.path()).append(" ---\n");
-                sb.append(f.content()).append("\n");
-            }
-        }
-
-        if (!contextFiles.isEmpty()) {
-            sb.append("\n\nCONTEXT FILES:\n");
-            appendContextFiles(sb, contextFiles);
-        }
-
-        return sb.toString();
-    }
-
-    /**
-     * Appends context files with group headers for subdirectories.
-     */
-    private void appendContextFiles(StringBuilder sb, List<SourceFile> files) {
-        Path contextRoot = contextFileCollector.getContextRoot();
-        Map<String, List<SourceFile>> grouped = new java.util.LinkedHashMap<>();
-
-        for (SourceFile f : files) {
-            Path relative = contextRoot.relativize(f.path());
-            String groupName = (relative.getNameCount() > 1) ? relative.getName(0).toString() : null;
-            grouped.computeIfAbsent(groupName, k -> new ArrayList<>()).add(f);
-        }
-
-        for (Map.Entry<String, List<SourceFile>> entry : grouped.entrySet()) {
-            String groupName = entry.getKey();
-            if (groupName != null) sb.append("\n=== [").append(groupName).append("] ===\n");
-            for (SourceFile f : entry.getValue()) {
-                sb.append("\n--- ").append(f.path()).append(" ---\n");
-                sb.append(f.content()).append("\n");
-            }
-        }
     }
 
     // -------- Getters --------
@@ -179,7 +120,6 @@ public class ClaudeContextManager {
         loadedContextClasses = null;
         runner = null;
         executor = null;
-        promptCache.clear();
         lastStaticFilesHash = 0;
     }
 }

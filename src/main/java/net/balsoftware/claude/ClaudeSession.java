@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * High-level API for Claude sessions.
@@ -24,8 +23,16 @@ public class ClaudeSession {
     private final ClaudeResponseParser responseParser;
     private final ClaudeTokenTracker tokenTracker;
 
-    // Response cache: key = hash(contextHash, message), value = cached response
-    private final Map<Integer, ClaudeStructuredResponseWithTokens> responseCache = new HashMap<>();
+    // Response cache: key = (system prompt + conversation history + message), value = cached response.
+    // The key MUST include the conversation history: the same message asked in a different
+    // conversation state is a different request and must not return an earlier answer.
+    private final Map<CacheKey, ClaudeStructuredResponseWithTokens> responseCache = new HashMap<>();
+
+    /**
+     * Composite, value-equality cache key. Using the full content (not a hash code) avoids
+     * the collisions that an {@code int}-hash key would silently produce.
+     */
+    private record CacheKey(String systemPrompt, List<String> history, String message) {}
     
     // Track last response
     private ClaudeStructuredResponseWithTokens lastResponse;
@@ -86,7 +93,7 @@ public class ClaudeSession {
         }
 
         // Check response cache
-        int cacheKey = Objects.hash(contextManager.getRunner().getCachedSystemPrompt(), message);
+        CacheKey cacheKey = buildCacheKey(contextManager.getRunner().getCachedSystemPrompt(), message);
         ClaudeStructuredResponseWithTokens cached = responseCache.get(cacheKey);
 
         ClaudeStructuredResponseWithTokens response;
@@ -157,6 +164,20 @@ public class ClaudeSession {
                 .toString();
 
         return (response.description() != null ? response.description() : "") + " [files: " + filePaths + "]";
+    }
+
+    /**
+     * Builds the response-cache key from the system prompt, the current conversation
+     * history, and the new message. History is included so a repeated message in a
+     * changed conversation is treated as a distinct request.
+     */
+    private CacheKey buildCacheKey(String systemPrompt, String message) {
+        List<String> history = new ArrayList<>();
+        for (ClaudeTurn turn : conversationStore.getTurns()) {
+            history.add(turn.getUserMessage());
+            history.add(turn.getAssistantMessage());
+        }
+        return new CacheKey(systemPrompt, List.copyOf(history), message);
     }
 
     // -------- FILE I/O --------
