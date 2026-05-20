@@ -21,6 +21,13 @@ public class ClaudeSession {
     private final Path outputRoot;
     private final String model;
 
+    // When true, generated file contents (not just paths) are kept in conversation history
+    // so follow-up turns can reference previously generated code. See Builder.
+    private final boolean includeFileContentInHistory;
+    // When true, each response is logged to stdout via ClaudeLogger. Off by default so the
+    // library stays quiet when embedded; the CLI does its own printing.
+    private final boolean logResponses;
+
     private final ClaudeContextManager contextManager;
     private final ConversationStore conversationStore;
     private final ClaudeResponseParser responseParser;
@@ -54,6 +61,8 @@ public class ClaudeSession {
     private ClaudeSession(Builder builder) {
         this.outputRoot = builder.outputRoot;
         this.model = builder.model;
+        this.includeFileContentInHistory = builder.includeFileContentInHistory;
+        this.logResponses = builder.logResponses;
         this.fileWriter = new GeneratedFileWriter();
         this.conversationStore = new ConversationStore();
         this.responseParser = new ClaudeResponseParser();
@@ -142,14 +151,16 @@ public class ClaudeSession {
         // Store as last response
         this.lastResponse = response;
 
-        // Log the response
-        ClaudeLogger.logResponse(model, message, new OKHttpClaudeClient.RawResponse(
-                response.structured().description() != null ? response.structured().description() : "[No description]",
-                response.inputTokens(),
-                response.outputTokens(),
-                response.cacheCreationTokens(),
-                response.cacheReadTokens()
-        ));
+        // Log the response (opt-in; off by default for quiet library use)
+        if (logResponses) {
+            ClaudeLogger.logResponse(model, message, new OKHttpClaudeClient.RawResponse(
+                    response.structured().description() != null ? response.structured().description() : "[No description]",
+                    response.inputTokens(),
+                    response.outputTokens(),
+                    response.cacheCreationTokens(),
+                    response.cacheReadTokens()
+            ));
+        }
 
         return response;
     }
@@ -163,19 +174,33 @@ public class ClaudeSession {
     }
 
     /**
-     * Builds a summary string from the response for conversation history.
+     * Builds the assistant message stored in conversation history.
+     *
+     * <p>By default this includes each generated file's full content so follow-up turns can
+     * reference the code that was produced. When {@code includeFileContentInHistory} is
+     * disabled, only the file paths are recorded (the original token-saving summary).
      */
     private String buildHistorySummary(ClaudeStructuredResponse response) {
+        String description = response.description() != null ? response.description() : "";
+
         if (!response.hasFiles()) {
-            return response.description() != null ? response.description() : "";
+            return description;
         }
 
-        String filePaths = response.files().stream()
-                .map(ClaudeStructuredResponse.FileItem::path)
-                .toList()
-                .toString();
+        if (!includeFileContentInHistory) {
+            String filePaths = response.files().stream()
+                    .map(ClaudeStructuredResponse.FileItem::path)
+                    .toList()
+                    .toString();
+            return description + " [files: " + filePaths + "]";
+        }
 
-        return (response.description() != null ? response.description() : "") + " [files: " + filePaths + "]";
+        StringBuilder sb = new StringBuilder(description);
+        for (ClaudeStructuredResponse.FileItem file : response.files()) {
+            sb.append("\n\n--- ").append(file.path()).append(" ---\n")
+                    .append(file.content() != null ? file.content() : "");
+        }
+        return sb.toString();
     }
 
     /**
@@ -384,6 +409,8 @@ public class ClaudeSession {
         private Path outputRoot = Path.of("generated");
         private Path contextFilesRoot = Path.of("context-files");
         private int maxTokens = 8192;
+        private boolean includeFileContentInHistory = true;
+        private boolean logResponses = false;
 
         private ClaudeClientFactory clientFactory;
         private SourceFileCollector sourceFileCollector;
@@ -416,6 +443,22 @@ public class ClaudeSession {
 
         public Builder maxTokens(int maxTokens) {
             this.maxTokens = maxTokens;
+            return this;
+        }
+
+        /**
+         * Whether generated file contents are kept in conversation history so follow-up turns
+         * can reference prior generated code. Defaults to {@code true}; set {@code false} to
+         * record only file paths (less context, fewer tokens).
+         */
+        public Builder includeFileContentInHistory(boolean include) {
+            this.includeFileContentInHistory = include;
+            return this;
+        }
+
+        /** Whether each response is logged to stdout. Defaults to {@code false}. */
+        public Builder logResponses(boolean logResponses) {
+            this.logResponses = logResponses;
             return this;
         }
 

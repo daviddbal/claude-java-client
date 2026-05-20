@@ -47,7 +47,7 @@ java -jar target/claude-1.0.0-SNAPSHOT.jar
 mvn test
 ```
 
-The suite has **105 tests** (JUnit 5). Six are disabled by default — they hit the
+The suite has **109 tests** (JUnit 5). Six are disabled by default — they hit the
 real Claude API and are meant to be run manually with a valid key.
 
 ## Configuration
@@ -93,6 +93,14 @@ session.loadContext(List.of(MyClass.class));   // include classes as context
 ClaudeStructuredResponseWithTokens response = session.ask("Add a builder to MyClass");
 session.writeFiles(response);                  // write generated files to ./generated/
 ```
+
+Builder options worth knowing:
+
+- `.includeFileContentInHistory(boolean)` — default `true`; keeps generated file
+  contents in conversation history so follow-up turns can reference prior code.
+  Set `false` to record only file paths (fewer tokens).
+- `.logResponses(boolean)` — default `false`; when `true`, each response is logged
+  to stdout. Off by default so the library stays quiet when embedded.
 
 ### Saving and resuming a session
 
