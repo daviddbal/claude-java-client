@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -115,6 +116,52 @@ class SessionRestoreIntegrationTest {
 
         assertNotNull(restored.getLastResponse(), "last response should be set from the final turn");
         assertEquals("answer to: hello", restored.getLastResponse().structured().description());
+    }
+
+    @Test
+    void restoresLegacyManifestWithoutStructuredField(@TempDir Path tempDir) throws IOException {
+        // Simulate a session saved before turns carried a structured response. The 2-arg
+        // SerializableTurn constructor leaves structured null, and @JsonInclude(NON_NULL)
+        // omits it from the manifest — exactly the shape of an old saved session.
+        SessionSnapshot legacy = new SessionSnapshot(
+                List.of(
+                        new SerializableTurn("First question", "First answer"),
+                        new SerializableTurn("Second question", "Second answer")
+                ),
+                List.of(),
+                "system prompt",
+                "2026-01-01T00:00:00Z",
+                42, 13, 0, 0
+        );
+
+        SessionPersistence persistence = new SessionPersistence(tempDir);
+        persistence.saveSnapshot("legacy", legacy);
+
+        // sanity check: the on-disk manifest really has no "structured" key
+        String manifest = Files.readString(tempDir.resolve("legacy").resolve("manifest.json"));
+        assertFalse(manifest.contains("\"structured\""), "legacy manifest should not contain structured");
+
+        SessionSnapshot loaded = persistence.loadSession("legacy");
+
+        AtomicReference<List<ClaudeMessage>> sent = new AtomicReference<>();
+        ClaudeSession restored = ClaudeSession.builder()
+                .apiKey("DUMMY_KEY")
+                .clientFactory(recordingFactory(sent))
+                .build();
+
+        // Exercises SerializableTurn.toClaudeTurn()'s null-structured fallback.
+        restored.restore(loaded, List.of());
+
+        assertEquals(2, restored.getTurnCount());
+        assertEquals(List.of("First question", "Second question"), restored.getConversationHistory());
+        assertEquals(42, restored.getTotalInputTokens());
+
+        // Continuation still replays the legacy turns (assistant text preserved).
+        restored.ask("Third question");
+        List<ClaudeMessage> conv = sent.get();
+        assertEquals("First question", conv.get(0).content());
+        assertEquals("First answer", conv.get(1).content());
+        assertEquals("Third question", conv.get(conv.size() - 1).content());
     }
 
     @Test

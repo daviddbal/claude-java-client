@@ -114,6 +114,30 @@ class ClaudeResponseParserTest {
     }
 
     @Test
+    void plainProseFallsBackToExplanation() throws IOException {
+        // No JSON object present → fall back to treating the text as an explanation.
+        String prose = "Just some prose, no JSON here.";
+
+        ClaudeStructuredResponse r = parser.parseStructured(prose);
+
+        assertEquals(ClaudeStructuredResponse.Type.explanation, r.type());
+        assertEquals(prose, r.description());
+        assertTrue(r.files().isEmpty());
+    }
+
+    @Test
+    void recoversFromOverEscapedJson() throws IOException {
+        // Runtime string is: {\"type\":\"explanation\",\"description\":\"hi\",\"files\":[]}
+        // Direct and extracted parses fail; the robust-unescape path recovers it.
+        String escaped = "{\\\"type\\\":\\\"explanation\\\",\\\"description\\\":\\\"hi\\\",\\\"files\\\":[]}";
+
+        ClaudeStructuredResponse r = parser.parseStructured(escaped);
+
+        assertEquals("hi", r.description());
+        assertTrue(r.files().isEmpty());
+    }
+
+    @Test
     void parsesCodeWithExplanation() throws IOException {
         String json = """
             {

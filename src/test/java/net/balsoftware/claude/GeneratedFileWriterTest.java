@@ -75,6 +75,20 @@ class GeneratedFileWriterTest {
     }
 
     @Test
+    void allowsRelativePathThatStaysInsideRoot(@TempDir Path tempDir) throws IOException {
+        // "a/../b/C.java" normalizes to "b/C.java", still inside the root → allowed.
+        var file = new ClaudeStructuredResponse.FileItem(
+                "a/../b/C.java",
+                "class C {}"
+        );
+
+        writer.writeAll(tempDir, responseWithFiles(List.of(file)));
+
+        assertTrue(Files.exists(tempDir.resolve("b/C.java")));
+        assertEquals("class C {}", Files.readString(tempDir.resolve("b/C.java")));
+    }
+
+    @Test
     void rejectsAbsolutePathEscape(@TempDir Path tempDir) {
         Path outside = tempDir.getParent().resolve("absolute-escape.java");
         var file = new ClaudeStructuredResponse.FileItem(

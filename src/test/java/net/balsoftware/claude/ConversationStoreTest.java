@@ -66,6 +66,39 @@ class ConversationStoreTest {
     }
 
     @Test
+    void restoreTurnsReplacesExistingTurns() {
+        ConversationStore store = new ConversationStore();
+        store.addTurn(createDummyTurn("old", "stale"));
+
+        store.restoreTurns(List.of(
+                createDummyTurn("q1", "a1"),
+                createDummyTurn("q2", "a2")
+        ));
+
+        assertEquals(2, store.getTurnCount());
+        List<ClaudeMessage> msgs = store.getMessages();
+        assertEquals("q1", msgs.get(0).content());
+        assertEquals("a1", msgs.get(1).content());
+        assertEquals("q2", msgs.get(2).content());
+    }
+
+    @Test
+    void restoreTurnsHonorsSlidingWindow() {
+        ConversationStore store = new ConversationStore();
+
+        List<ClaudeTurn> twelve = new java.util.ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            twelve.add(createDummyTurn("user " + i, "assistant " + i));
+        }
+
+        store.restoreTurns(twelve);
+
+        // MAX_TURNS is 10, so the two oldest are trimmed.
+        assertEquals(10, store.getTurnCount());
+        assertEquals("user 2", store.getMessages().get(0).content());
+    }
+
+    @Test
     void getMessagesIsUnmodifiable() {
         ConversationStore store = new ConversationStore();
         store.addTurn(createDummyTurn("hi", "bye"));
