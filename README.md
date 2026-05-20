@@ -22,7 +22,8 @@ and it returns structured JSON with file contents you can write to disk. Convers
 
 ## Setup
 
-Create a `.env` file in the project root (see `.env.example`):
+Provide your API key as a `CLAUDE_API_KEY` environment variable, or in a `.env`
+file in the project root (see `.env.example`):
 
 ```
 CLAUDE_API_KEY=sk-ant-...

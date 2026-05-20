@@ -88,11 +88,4 @@ class MultiLineInputReaderTest {
 
         assertEquals("", result);
     }
-
-    @Test
-    void testCommandRecognition() {
-        assertTrue(MultiLineInputReader.isCommand("reset"));
-        assertTrue(MultiLineInputReader.isCommand("write"));
-        assertFalse(MultiLineInputReader.isCommand("hello world"));
-    }
 }

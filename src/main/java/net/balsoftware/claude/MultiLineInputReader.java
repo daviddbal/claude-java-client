@@ -59,17 +59,4 @@ public class MultiLineInputReader implements InputReader {
 
         return sb.toString();
     }
-
-    /**
-     * Checks if the input is a recognized command.
-     */
-    public static boolean isCommand(String input) {
-        if (input == null) return false;
-        switch (input.toLowerCase().trim()) {
-            case "quit", "reset", "write", "show", "turns", "tokens", "context":
-                return true;
-            default:
-                return false;
-        }
-    }
 }
