@@ -20,10 +20,19 @@ public class ClaudeExecutor {
      * Executes a single request to Claude and returns the structured response with tokens.
      */
     public ClaudeStructuredResponseWithTokens execute(String model, String userMessage) throws IOException {
+        return execute(model, userMessage, null);
+    }
+
+    /**
+     * Executes a single request, streaming text chunks to {@code onTextDelta} as they arrive
+     * (a null callback uses the non-streaming path).
+     */
+    public ClaudeStructuredResponseWithTokens execute(
+            String model, String userMessage, java.util.function.Consumer<String> onTextDelta) throws IOException {
         if (runner == null) {
             throw new IllegalStateException("Runner must be initialized before execution.");
         }
 
-        return runner.runStructured(model, userMessage);
+        return runner.runStructured(model, userMessage, onTextDelta);
     }
 }

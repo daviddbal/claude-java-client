@@ -28,6 +28,8 @@ public class Main {
                 System.getenv().getOrDefault("CLAUDE_MAX_TOKENS", String.valueOf(OKHttpClaudeClient.DEFAULT_MAX_TOKENS))
         );
 
+        boolean streaming = Boolean.parseBoolean(System.getenv().getOrDefault("CLAUDE_STREAM", "false"));
+
         ClaudeClientFactory factory = config -> new OKHttpClaudeClient(
                 config.apiKey(),
                 config.maxTokens(),
@@ -183,7 +185,19 @@ public class Main {
             if (input.isBlank()) continue;
 
             try {
-                last = session.ask(input); // returns ClaudeStructuredResponseWithTokens
+                if (streaming) {
+                    // Stream raw text (the structured JSON) as it is generated, then fall
+                    // through to print the parsed summary below.
+                    System.out.print("\nClaude (streaming)> ");
+                    System.out.flush();
+                    last = session.askStreaming(input, delta -> {
+                        System.out.print(delta);
+                        System.out.flush();
+                    });
+                    System.out.println();
+                } else {
+                    last = session.ask(input); // returns ClaudeStructuredResponseWithTokens
+                }
 
                 if (CLI_LOGGING_ENABLED) {
                     System.out.println("\nClaude> " +

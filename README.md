@@ -9,6 +9,7 @@ and it returns structured JSON with file contents you can write to disk. Convers
 
 - **Multi-turn chat** with conversation history and turn-based context.
 - **Structured responses** — Claude replies in JSON (`type`, `description`, `files[]`); generated files are written under `generated/`.
+- **Streaming** — receive text chunks as they are generated via `ClaudeSession.askStreaming`, or in the CLI with `CLAUDE_STREAM=true`.
 - **Session persistence** — save the current conversation (turns, context, token totals) to disk and resume it later, in the CLI (`save` / `resume` / `sessions`) or via the library (`SessionPersistence` + `ClaudeSession.restore`).
 - **Prompt caching** — the system prompt is sent with Anthropic's ephemeral cache control so repeated requests with the same context are cheaper.
 - **Token tracking** — running totals for input/output and cache read/write tokens.
@@ -47,7 +48,7 @@ java -jar target/claude-1.0.0-SNAPSHOT.jar
 mvn test
 ```
 
-The suite has **109 tests** (JUnit 5). Six are disabled by default — they hit the
+The suite has **113 tests** (JUnit 5). Six are disabled by default — they hit the
 real Claude API and are meant to be run manually with a valid key.
 
 ## Configuration
@@ -58,6 +59,7 @@ real Claude API and are meant to be run manually with a valid key.
 | `CLAUDE_MODEL` | `claude-haiku-4-5-20251001` | Full model id to use |
 | `CLAUDE_MAX_TOKENS` | `16384` | Max output tokens per response |
 | `CLAUDE_COLLECT_RAW` | `false` | When `true`, dumps every raw request/response to `collected-claude-requests/` and `collected-claude-responses/` (debugging only) |
+| `CLAUDE_STREAM` | `false` | When `true`, the CLI streams responses as they are generated |
 
 ## CLI commands
 
@@ -101,6 +103,18 @@ Builder options worth knowing:
   Set `false` to record only file paths (fewer tokens).
 - `.logResponses(boolean)` — default `false`; when `true`, each response is logged
   to stdout. Off by default so the library stays quiet when embedded.
+
+### Streaming
+
+```java
+// onTextDelta receives chunks of the response (the structured JSON) as it is generated.
+// The returned value is still the fully parsed structured response.
+ClaudeStructuredResponseWithTokens response =
+        session.askStreaming("Refactor MyClass", chunk -> System.out.print(chunk));
+```
+
+Streaming happens on a cache miss; a cached answer returns immediately without invoking
+the callback.
 
 ### Saving and resuming a session
 

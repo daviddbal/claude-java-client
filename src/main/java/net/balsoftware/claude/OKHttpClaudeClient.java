@@ -11,12 +11,16 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
+import okhttp3.ResponseBody;
+
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public class OKHttpClaudeClient implements ClaudeClient {
 
@@ -65,9 +69,41 @@ public class OKHttpClaudeClient implements ClaudeClient {
     }
 
     public RawResponse send(String model, List<ClaudeMessage> conversationTurns) throws IOException {
+        String requestJson = buildRequestBody(model, conversationTurns, false);
+        String requestId = newRequestId();
+        if (COLLECT_CLAUDE_RAW) {
+            saveRaw("collected-claude-requests", "request", requestId, requestJson);
+        }
+
+        return executeWithRetry(newRequest(requestJson), response -> {
+            String responseStr = response.body() != null ? response.body().string() : "";
+            if (COLLECT_CLAUDE_RAW) {
+                saveRaw("collected-claude-responses", "response", requestId, responseStr);
+            }
+            return parseResponse(responseStr);
+        });
+    }
+
+    @Override
+    public RawResponse sendStreaming(String model, List<ClaudeMessage> conversationTurns,
+                                     Consumer<String> onTextDelta) throws IOException {
+        String requestJson = buildRequestBody(model, conversationTurns, true);
+        String requestId = newRequestId();
+        if (COLLECT_CLAUDE_RAW) {
+            saveRaw("collected-claude-requests", "request", requestId, requestJson);
+        }
+
+        return executeWithRetry(newRequest(requestJson), response -> readStream(response, onTextDelta, requestId));
+    }
+
+    private String buildRequestBody(String model, List<ClaudeMessage> conversationTurns, boolean stream)
+            throws IOException {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", model);
         body.put("max_tokens", maxTokens);
+        if (stream) {
+            body.put("stream", true);
+        }
 
         if (!systemPrompt.isBlank()) {
             ArrayNode systemArray = objectMapper.createArrayNode();
@@ -93,14 +129,15 @@ public class OKHttpClaudeClient implements ClaudeClient {
         }
         body.set("messages", messagesArray);
 
-        String requestJson = objectMapper.writeValueAsString(body);
-        String requestId = System.currentTimeMillis() + "-" + (int) (Math.random() * 100_000);
+        return objectMapper.writeValueAsString(body);
+    }
 
-        if (COLLECT_CLAUDE_RAW) {
-            saveRaw("collected-claude-requests", "request", requestId, requestJson);
-        }
+    private static String newRequestId() {
+        return System.currentTimeMillis() + "-" + (int) (Math.random() * 100_000);
+    }
 
-        Request request = new Request.Builder()
+    private Request newRequest(String requestJson) {
+        return new Request.Builder()
                 .url(apiUrl())
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", ANTHROPIC_VERSION)
@@ -108,7 +145,15 @@ public class OKHttpClaudeClient implements ClaudeClient {
                 .header("content-type", "application/json")
                 .post(RequestBody.create(requestJson, JSON))
                 .build();
+    }
 
+    @FunctionalInterface
+    private interface ResponseHandler {
+        RawResponse handle(Response response) throws IOException;
+    }
+
+    /** Runs a request with retry/backoff, delegating success handling to {@code handler}. */
+    private RawResponse executeWithRetry(Request request, ResponseHandler handler) throws IOException {
         for (int attempt = 0; ; attempt++) {
             Response response;
             try {
@@ -124,11 +169,7 @@ public class OKHttpClaudeClient implements ClaudeClient {
 
             try (response) {
                 if (response.isSuccessful()) {
-                    String responseStr = response.body() != null ? response.body().string() : "";
-                    if (COLLECT_CLAUDE_RAW) {
-                        saveRaw("collected-claude-responses", "response", requestId, responseStr);
-                    }
-                    return parseResponse(responseStr);
+                    return handler.handle(response);
                 }
 
                 int code = response.code();
@@ -142,6 +183,69 @@ public class OKHttpClaudeClient implements ClaudeClient {
                 throw new IOException("Claude API error " + code + ": " + errorBody);
             }
         }
+    }
+
+    /**
+     * Reads an Anthropic SSE stream: invokes {@code onTextDelta} for each text chunk and
+     * accumulates the full text plus token usage into a {@link RawResponse}.
+     */
+    private RawResponse readStream(Response response, Consumer<String> onTextDelta, String requestId)
+            throws IOException {
+        ResponseBody body = response.body();
+        if (body == null) {
+            throw new IOException("Empty streaming response body");
+        }
+
+        StringBuilder fullText = new StringBuilder();
+        int inputTokens = 0;
+        int outputTokens = 0;
+        int cacheCreationTokens = 0;
+        int cacheReadTokens = 0;
+
+        try (BufferedReader reader = new BufferedReader(body.charStream())) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("data:")) {
+                    continue; // skip "event:" lines and blank separators
+                }
+                String data = line.substring("data:".length()).trim();
+                if (data.isEmpty() || data.equals("[DONE]")) {
+                    continue;
+                }
+
+                JsonNode event = objectMapper.readTree(data);
+                switch (event.path("type").asText("")) {
+                    case "message_start" -> {
+                        JsonNode usage = event.path("message").path("usage");
+                        inputTokens = usage.path("input_tokens").asInt(inputTokens);
+                        cacheCreationTokens = usage.path("cache_creation_input_tokens").asInt(cacheCreationTokens);
+                        cacheReadTokens = usage.path("cache_read_input_tokens").asInt(cacheReadTokens);
+                        outputTokens = usage.path("output_tokens").asInt(outputTokens);
+                    }
+                    case "content_block_delta" -> {
+                        JsonNode delta = event.path("delta");
+                        if ("text_delta".equals(delta.path("type").asText())) {
+                            String text = delta.path("text").asText("");
+                            if (!text.isEmpty()) {
+                                fullText.append(text);
+                                if (onTextDelta != null) {
+                                    onTextDelta.accept(text);
+                                }
+                            }
+                        }
+                    }
+                    case "message_delta" -> outputTokens = event.path("usage").path("output_tokens").asInt(outputTokens);
+                    case "error" -> throw new IOException("Claude API stream error: " + event.path("error"));
+                    default -> { /* ping, content_block_start/stop, message_stop: ignore */ }
+                }
+            }
+        }
+
+        String text = fullText.toString();
+        if (COLLECT_CLAUDE_RAW) {
+            saveRaw("collected-claude-responses", "response", requestId, text);
+        }
+        return new RawResponse(text, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
     }
 
     /** The endpoint to POST to. Overridable so tests can point at an in-process server. */

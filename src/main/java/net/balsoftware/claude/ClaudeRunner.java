@@ -117,6 +117,16 @@ public class ClaudeRunner {
      * Does NOT modify conversation state — that's done in ClaudeSession.
      */
     public ClaudeStructuredResponseWithTokens runStructured(String model, String userMessage) throws IOException {
+        return runStructured(model, userMessage, null);
+    }
+
+    /**
+     * Like {@link #runStructured(String, String)}, but streams text chunks to {@code onTextDelta}
+     * as they arrive. The full text is still parsed into a structured response at the end.
+     * A null {@code onTextDelta} uses the non-streaming path.
+     */
+    public ClaudeStructuredResponseWithTokens runStructured(
+            String model, String userMessage, java.util.function.Consumer<String> onTextDelta) throws IOException {
         if (cachedSystemPrompt.isBlank())
             throw new IllegalStateException("Context/system prompt must be set before run(). Call setContext() first.");
         if (client == null)
@@ -126,7 +136,9 @@ public class ClaudeRunner {
         List<ClaudeMessage> messages = conversationStore.toMessages();
         messages.add(new ClaudeMessage(ClaudeRole.USER, userMessage));
 
-        OKHttpClaudeClient.RawResponse raw = client.send(model, messages);
+        OKHttpClaudeClient.RawResponse raw = onTextDelta == null
+                ? client.send(model, messages)
+                : client.sendStreaming(model, messages, onTextDelta);
         if (raw == null) {
             throw new IllegalStateException("Claude client returned null response. This indicates a misconfigured or mocked client.");
         }

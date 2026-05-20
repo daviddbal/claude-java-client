@@ -109,6 +109,21 @@ public class ClaudeSession {
      * Asks Claude a question and returns the structured response.
      */
     public ClaudeStructuredResponseWithTokens ask(String message) throws IOException {
+        return ask(message, (java.util.function.Consumer<String>) null);
+    }
+
+    /**
+     * Asks Claude a question, streaming text chunks to {@code onTextDelta} as they arrive, and
+     * returns the final structured response. Streaming happens only on a cache miss (a cache
+     * hit returns immediately without invoking the callback).
+     */
+    public ClaudeStructuredResponseWithTokens askStreaming(String message, java.util.function.Consumer<String> onTextDelta)
+            throws IOException {
+        return ask(message, onTextDelta);
+    }
+
+    private ClaudeStructuredResponseWithTokens ask(String message, java.util.function.Consumer<String> onTextDelta)
+            throws IOException {
         if (contextManager.getExecutor() == null) {
             throw new IllegalStateException("loadContext() must be called first.");
         }
@@ -130,11 +145,11 @@ public class ClaudeSession {
             );
             tokenTracker.accumulate(response);
         } else {
-            // Execute and cache
-            response = contextManager.getExecutor().execute(model, message);
+            // Execute and cache (streaming when a callback is supplied)
+            response = contextManager.getExecutor().execute(model, message, onTextDelta);
             responseCache.put(cacheKey, response);
             tokenTracker.accumulate(response);
-            
+
             // Create and store turn (ONLY ONCE)
             ClaudeTurn turn = new ClaudeTurn(
                     message,
